@@ -11,6 +11,7 @@
 #include "minecraft/v2/block.h"
 
 #include <random>
+#include <fstream>
 
 namespace
 {
@@ -457,6 +458,13 @@ namespace mcpe_viz {
         const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
         const int32_t imageW = chunkW * 16;
         const int32_t imageH = chunkH * 16;
+log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
+FILE * fd = fopen("world_blocks.xyz", "wb");
+std::ofstream ld;
+ld.open("world_blocks.txt");
+ld << "WORLD BLOCKS LEGEND\n";
+
+bool blockSeen[256] = {};
 
         char keybuf[128];
         int32_t keybuflen;
@@ -670,7 +678,6 @@ namespace mcpe_viz {
                             cubicFoundCount++;
 
                             // we got a post-0.17 cubic chunk
-
                             const char* rchunk = svalue.data();
                             const int16_t* pchunk_word = (int16_t*)svalue.data();
                             const char* pchunk_byte = (char*)svalue.data();
@@ -766,6 +773,20 @@ namespace mcpe_viz {
                                                     record_unknown_block_id(blockid);
                                                     color = kColorDefault;
                                                 }
+
+int16_t x = 16*minChunkX + imageX + cx;
+fwrite(&x, 2, 1, fd);
+int16_t z = 16*minChunkZ + imageZ + cz;
+fwrite(&z, 2, 1, fd);
+uint8_t y = cy;
+fwrite(&y, 1, 1, fd);
+uint8_t b = blockid;
+fwrite(&b, 1, 1, fd);
+if (blockSeen[b] == false)
+{
+    ld << "blockid=" << std::dec << blockid << ", name='" << block->name << "', color=" << std::hex << color << std::dec << std::endl;
+}
+blockSeen[b] = true;
                                             }
                                             else {
                                                 // bad blockid
@@ -842,6 +863,8 @@ namespace mcpe_viz {
                 png_write_rows(png[cy].png, png[cy].row_pointers, 16);
             }
         }
+fclose(fd);
+ld.close();
 
         for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
             delete[] rbuf[cy];
