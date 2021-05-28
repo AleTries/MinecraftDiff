@@ -458,14 +458,6 @@ namespace mcpe_viz {
         const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
         const int32_t imageW = chunkW * 16;
         const int32_t imageH = chunkH * 16;
-log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
-FILE * fd = fopen("world_blocks.xyz", "wb");
-std::ofstream ld;
-ld.open("world_blocks.txt");
-ld << "WORLD BLOCKS LEGEND\n";
-
-uint64_t blockCnt[1024] = {};
-std::string blockNames[1024];
 
         char keybuf[128];
         int32_t keybuflen;
@@ -509,6 +501,400 @@ std::string blockNames[1024];
             for (int32_t cz = 0; cz < 16; cz++) {
                 png[cy].row_pointers[cz] = &rbuf[cy][(cz * imageW) * 3];
             }
+        }
+
+        // create a helper buffer which contains topBlockY for the entire image
+        uint8_t currTopBlockY = MAX_BLOCK_HEIGHT;
+        size_t bsize = (size_t)imageW * (size_t)imageH;
+        uint8_t* tbuf = new uint8_t[bsize];
+        memset(tbuf, MAX_BLOCK_HEIGHT, bsize);
+        for (const auto& it : chunks) {
+            int32_t ix = (it.second->chunkX + chunkOffsetX) * 16;
+            int32_t iz = (it.second->chunkZ + chunkOffsetZ) * 16;
+            for (int32_t cz = 0; cz < 16; cz++) {
+                for (int32_t cx = 0; cx < 16; cx++) {
+                    tbuf[(iz + cz) * imageW + (ix + cx)] = it.second->topBlockY[cx][cz];
+                }
+            }
+        };
+
+        int32_t foundCt = 0, notFoundCt2 = 0;
+        //todozooz -- new 16-bit block-id's (instead of 8-bit) are a BIG issue - this needs attention here
+        uint8_t blockdata;
+        int32_t blockid;
+
+        // we operate on sets of 16 rows (which is one chunk high) of image z
+        int32_t runCt = 0;
+        for (int32_t imageZ = 0, chunkZ = minChunkZ; imageZ < imageH; imageZ += 16, chunkZ++) {
+
+            if ((runCt++ % 20) == 0) {
+                log::info("    Row {} of {}", imageZ, imageH);
+            }
+
+            for (int32_t imageX = 0, chunkX = minChunkX; imageX < imageW; imageX += 16, chunkX++) {
+
+                // FIRST - we try pre-0.17 chunks
+
+                // construct key to get the chunk
+                if (dimId == kDimIdOverworld) {
+                    //overworld
+                    memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+                    memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+                    memcpy(&keybuf[8], &kt, sizeof(uint8_t));
+                    keybuflen = 9;
+                }
+                else {
+                    // nether (and probably any others that are added)
+                    memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+                    memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+                    memcpy(&keybuf[8], &kw, sizeof(int32_t));
+                    memcpy(&keybuf[12], &kt, sizeof(uint8_t));
+                    keybuflen = 13;
+                }
+
+                dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
+                if (dstatus.ok()) {
+
+                    // we got a pre-0.17 chunk
+                    const char* ochunk = nullptr;
+                    const char* pchunk = nullptr;
+
+                    pchunk = svalue.data();
+                    ochunk = pchunk;
+                    // size_t ochunk_size = svalue.size();
+                    foundCt++;
+
+                    // we step through the chunk in the natural order to speed things up
+                    for (int32_t cx = 0; cx < 16; cx++) {
+                        for (int32_t cz = 0; cz < 16; cz++) {
+                            currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
+                            for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT_127; cy++) {
+
+                                // todo - if we use this, we get blockdata errors... somethings not right
+                                //blockid = *(pchunk++);
+                                blockid = getBlockId_LevelDB_v2(ochunk, cx, cz, cy);
+
+                                if (blockid == 0 && (cy > currTopBlockY) && (dimId != kDimIdNether)) {
+
+                                    // special handling for air -- keep existing value if we are above top block
+                                    // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
+                                    // however, we do NOT do this for the nether. because: the nether
+
+                                    // we need to copy this pixel from another layer
+                                    memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
+                                        &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
+                                        3);
+
+                                }
+                                else {
+                                    auto block = Block::get(blockid);
+                                    if (block != nullptr) {
+                                        if (block->hasVariants()) {
+                                            blockdata = getBlockData_LevelDB_v2(ochunk, cx, cz, cy);
+                                            auto variant = block->getVariantByBlockData(blockdata);
+                                            if (variant != nullptr) {
+                                                color = variant->color();
+                                            }
+                                            else {
+                                                record_unknown_block_variant(
+                                                    block->id,
+                                                    block->name,
+                                                    blockdata);
+                                                // since we did not find the variant, use the parent block's color
+                                                color = block->color();
+                                            }
+                                        }
+                                        else {
+                                            color = block->color();
+                                        }
+                                    }
+                                    else {
+                                        record_unknown_block_id(blockid);
+                                        color = kColorDefault;
+                                    }
+
+#ifdef PIXEL_COPY_MEMCPY
+                                    memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], &pcolor[1], 3);
+#else
+                                    // todo - any use in optimizing the offset calc?
+                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3] = pcolor[1];
+                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 1] = pcolor[2];
+                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 2] = pcolor[3];
+#endif
+                                }
+                            }
+
+                            // to support 256h worlds, for v2 chunks, we need to make 128..255 the same as 127
+                            // todo - could optimize this
+                            for (int cy = 128; cy <= MAX_BLOCK_HEIGHT; cy++) {
+                                memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
+                                    &rbuf[127][((cz * imageW) + imageX + cx) * 3], 3);
+                            }
+
+                        }
+                    }
+                }
+                else {
+
+                    // we did NOT find a pre-0.17 chunk...
+
+                    // SECOND -- we try post 0.17 chunks
+
+                    // we need to iterate over all possible y cubic chunks here...
+                    int32_t cubicFoundCount = 0;
+                    for (int8_t cubicy = 0; cubicy < MAX_CUBIC_Y; cubicy++) {
+
+                        // todobug - this fails around level 112? on another1 -- weird -- run a valgrind to see where we're messing up
+                        //check valgrind output
+
+                        // construct key to get the chunk
+                        if (dimId == kDimIdOverworld) {
+                            //overworld
+                            memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+                            memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+                            memcpy(&keybuf[8], &kt_v3, sizeof(uint8_t));
+                            memcpy(&keybuf[9], &cubicy, sizeof(uint8_t));
+                            keybuflen = 10;
+                        }
+                        else {
+                            // nether (and probably any others that are added)
+                            memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+                            memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+                            memcpy(&keybuf[8], &kw, sizeof(int32_t));
+                            memcpy(&keybuf[12], &kt_v3, sizeof(uint8_t));
+                            memcpy(&keybuf[13], &cubicy, sizeof(uint8_t));
+                            keybuflen = 14;
+                        }
+
+                        dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
+                        if (dstatus.ok()) {
+                            cubicFoundCount++;
+
+                            // we got a post-0.17 cubic chunk
+                            const char* rchunk = svalue.data();
+                            const int16_t* pchunk_word = (int16_t*)svalue.data();
+                            const char* pchunk_byte = (char*)svalue.data();
+                            size_t ochunk_size = svalue.size();
+                            const int16_t* ochunk_word = pchunk_word;
+                            const char* ochunk_byte = pchunk_byte;
+                            bool wordModeFlag = false;
+                            foundCt++;
+
+                            // determine if it is a v7 chunk and process accordingly
+                            //todozooz - here is where it gets weird
+                            if (rchunk[0] != 0x0) {
+                                // we have a v7 chunk - emulate v3
+                                convertChunkV7toV3(rchunk, ochunk_size, emuchunk);
+                                wordModeFlag = true;
+                                pchunk_word = emuchunk;
+                                ochunk_word = emuchunk;
+                                ochunk_size = NUM_BYTES_CHUNK_V3;
+                            }
+                            else {
+                                wordModeFlag = false;
+                                // slogger.msg(kLogWarning,"Found a non-v7 chunk\n");
+                            }
+
+                            // the first byte is not interesting to us (it is version #?)
+                            pchunk_word++;
+                            pchunk_byte++;
+
+                            // we step through the chunk in the natural order to speed things up
+                            for (int32_t cx = 0; cx < 16; cx++) {
+                                for (int32_t cz = 0; cz < 16; cz++) {
+                                    currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
+                                    for (int32_t ccy = 0; ccy < 16; ccy++) {
+                                        int32_t cy = cubicy * 16 + ccy;
+
+                                        // todo - if we use this, we get blockdata errors... somethings not right
+                                        if (wordModeFlag) {
+                                            blockid = *(pchunk_word++);
+                                        }
+                                        else {
+                                            //todozooz - getting blockid manually fixes issue
+                                            // blockid = *(pchunk_byte++);
+                                            blockid = getBlockId_LevelDB_v3(ochunk_byte, cx, cz, ccy);
+                                        }
+
+                                        // blockid = getBlockId_LevelDB_v3(ochunk, cx,cz,ccy);
+
+                                        if (blockid == 0 && (cy > currTopBlockY) && (dimId != kDimIdNether)) {
+
+                                            // special handling for air -- keep existing value if we are above top block
+                                            // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
+                                            // however, we do NOT do this for the nether. because: the nether
+
+                                            // we need to copy this pixel from another layer
+                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
+                                                &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
+                                                3);
+
+                                        }
+                                        else {
+                                            // TODO not safe 
+                                            if (blockid >= 0 && blockid < 1024) {
+                                                auto block = Block::get(blockid);
+                                                if (block != nullptr) {
+                                                    if (block->hasVariants()) {
+                                                        if (wordModeFlag) {
+                                                            blockdata = getBlockData_LevelDB_v3__fake_v7(ochunk_word,
+                                                                ochunk_size,
+                                                                cx, cz, ccy);
+                                                        }
+                                                        else {
+                                                            blockdata = getBlockData_LevelDB_v3(ochunk_byte,
+                                                                ochunk_size, cx, cz,
+                                                                ccy);
+                                                        }
+                                                        auto variant = block->getVariantByBlockData(blockdata);
+                                                        if (variant != nullptr) {
+                                                            color = variant->color();
+                                                        }
+                                                        else {
+                                                            record_unknown_block_variant(
+                                                                block->id,
+                                                                block->name,
+                                                                blockdata);
+                                                            color = block->color();
+                                                        }
+                                                    }
+                                                    else {
+                                                        color = block->color();
+                                                    }
+                                                }
+                                                else {
+                                                    record_unknown_block_id(blockid);
+                                                    color = kColorDefault;
+                                                }
+
+                                            }
+                                            else {
+                                                // bad blockid
+                                                //todozooz todostopper - we get a lot of these w/ negative blockid around row 4800 of world 'another1'
+                                                log::trace("Invalid blockid={} (image {} {}) (cc {} {} {})",
+                                                    blockid, imageX, imageZ, cx, cz, cy);
+                                                record_unknown_block_id(blockid);
+                                                // set an unused color
+                                                color = local_htobe32(0xf010d0);
+                                            }
+
+#ifdef PIXEL_COPY_MEMCPY
+                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], &pcolor[1], 3);
+#else
+                                            // todo - any use in optimizing the offset calc?
+                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3] = pcolor[1];
+                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 1] = pcolor[2];
+                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 2] = pcolor[3];
+#endif
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else {
+                            // we did NOT find the cubic chunk, which means that it is 100% air
+
+                            for (int32_t cx = 0; cx < 16; cx++) {
+                                for (int32_t cz = 0; cz < 16; cz++) {
+                                    currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
+                                    for (int32_t ccy = 0; ccy < 16; ccy++) {
+                                        int32_t cy = cubicy * 16 + ccy;
+                                        if ((cy > currTopBlockY) && (dimId != kDimIdNether)) {
+                                            // special handling for air -- keep existing value if we are above top block
+                                            // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
+                                            // however, we do NOT do this for the nether. because: the nether
+
+                                            // we need to copy this pixel from another layer
+                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
+                                                &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
+                                                3);
+                                        }
+                                        else {
+                                            memset(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], 0, 3);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (cubicFoundCount <= 0) {
+
+                        // FINALLY -- we did not find the chunk at all
+                        notFoundCt2++;
+                        // slogger.msg(kLogInfo1,"WARNING: Did not find chunk in leveldb x=%d z=%d status=%s\n", chunkX, chunkZ, dstatus.ToString().c_str());
+
+                        // we need to clear this area
+                        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
+                            for (int32_t cz = 0; cz < 16; cz++) {
+                                memset(&rbuf[cy][((cz * imageW) + imageX) * 3], 0, 16 * 3);
+                            }
+                        }
+                        // todonow - need this?
+                        //continue;
+                    }
+                }
+
+            }
+
+            // put the png rows
+            // todo - png lib is SLOW - worth it to alloc a larger window (16-row increments) and write in batches?
+            for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
+                png_write_rows(png[cy].png, png[cy].row_pointers, 16);
+            }
+        }
+
+        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
+            delete[] rbuf[cy];
+            png[cy].close();
+        }
+
+        delete[] tbuf;
+
+        // slogger.msg(kLogInfo1,"    Chunk Info: Found = %d / Not Found (our list) = %d / Not Found (leveldb) = %d\n", foundCt, notFoundCt1, notFoundCt2);
+
+        delete[] emuchunk;
+        return 0;
+    }
+
+    int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::string& worldName)
+    {
+        const int32_t chunkOffsetX = -minChunkX;
+        const int32_t chunkOffsetZ = -minChunkZ;
+
+        const int32_t chunkW = (maxChunkX - minChunkX + 1);
+        const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
+        const int32_t imageW = chunkW * 16;
+        const int32_t imageH = chunkH * 16;
+log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
+FILE * fd = fopen("world_blocks.xyz", "wb");
+std::ofstream ld;
+ld.open(worldName+"_blocks.txt");
+ld << "WORLD BLOCKS LEGEND\n";
+
+uint64_t blockCnt[1024] = {};
+std::string blockNames[1024];
+
+        char keybuf[128];
+        int32_t keybuflen;
+        int32_t kw = dimId;
+        uint8_t kt = 0x30;
+        uint8_t kt_v3 = 0x2f;
+        leveldb::Status dstatus;
+
+        log::info("    Writing all images in one pass");
+
+        std::string svalue;
+
+        int32_t color;
+        const char* pcolor = (const char*)&color;
+
+        int16_t* emuchunk = new int16_t[NUM_BYTES_CHUNK_V3];
+
+        // create row buffers
+        uint8_t* rbuf[MAX_BLOCK_HEIGHT + 1];
+        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
+            rbuf[cy] = new uint8_t[(imageW * 3) * 16];
         }
 
         // create a helper buffer which contains topBlockY for the entire image
@@ -867,12 +1253,6 @@ if (blockid < 1024)
                 }
 
             }
-
-            // put the png rows
-            // todo - png lib is SLOW - worth it to alloc a larger window (16-row increments) and write in batches?
-            for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
-                png_write_rows(png[cy].png, png[cy].row_pointers, 16);
-            }
         }
 
 for (int i=0; i<1024; i++)
@@ -885,11 +1265,6 @@ for (int i=0; i<1024; i++)
 fclose(fd);
 ld.close();
 
-        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
-            delete[] rbuf[cy];
-            png[cy].close();
-        }
-
         delete[] tbuf;
 
         // slogger.msg(kLogInfo1,"    Chunk Info: Found = %d / Not Found (our list) = %d / Not Found (leveldb) = %d\n", foundCt, notFoundCt1, notFoundCt2);
@@ -897,205 +1272,6 @@ ld.close();
         delete[] emuchunk;
         return 0;
     }
-
-    int32_t DimensionData_LevelDB::generateMovie(leveldb::DB* db, const std::string& fnBase, const std::string& fnOut, bool makeMovieFlag, bool useCropFlag)
-    {
-        const int32_t chunkOffsetX = -minChunkX;
-        const int32_t chunkOffsetZ = -minChunkZ;
-
-        const int32_t chunkW = (maxChunkX - minChunkX + 1);
-        const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
-        const int32_t imageW = chunkW * 16;
-        const int32_t imageH = chunkH * 16;
-
-        int32_t divisor = 1;
-        if (dimId == kDimIdNether) {
-            // if nether, we divide coordinates by 8
-            divisor = 8;
-        }
-
-        int32_t cropX, cropZ, cropW, cropH;
-
-        if (useCropFlag) {
-            cropX = control.movieX / divisor;
-            cropZ = control.movieY / divisor;
-            cropW = control.movieW / divisor;
-            cropH = control.movieH / divisor;
-        }
-        else {
-            cropX = cropZ = 0;
-            cropW = imageW;
-            cropH = imageH;
-        }
-
-        // note RGB pixels
-        uint8_t* buf = new uint8_t[cropW * cropH * 3];
-        memset(buf, 0, cropW * cropH * 3);
-
-        // todobig - we *could* write image data to flat files during dbParse and then convert
-        //   these flat files into png here (but temp disk space requirements are *huge*); could try gzwrite etc
-
-        std::string svalue;
-        const char* pchunk = nullptr;
-        int32_t pchunkX = 0;
-        int32_t pchunkZ = 0;
-
-        int32_t color;
-        const char* pcolor = (const char*)&color;
-        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
-            // todo - make this part a func so that user can ask for specific slices from the cmdline?
-            log::info("  Layer {}", cy);
-            for (const auto& it : chunks) {
-                int32_t imageX = (it.second->chunkX + chunkOffsetX) * 16;
-                int32_t imageZ = (it.second->chunkZ + chunkOffsetZ) * 16;
-
-                for (int32_t cz = 0; cz < 16; cz++) {
-                    int32_t iz = (imageZ + cz);
-
-                    for (int32_t cx = 0; cx < 16; cx++) {
-                        int32_t ix = (imageX + cx);
-
-                        if (!useCropFlag ||
-                            ((ix >= cropX) && (ix < (cropX + cropW)) && (iz >= cropZ) && (iz < (cropZ + cropH)))) {
-
-                            if (pchunk == nullptr || (pchunkX != it.second->chunkX) ||
-                                (pchunkZ != it.second->chunkZ)) {
-                                // get the chunk
-                                // construct key
-                                char keybuf[20];
-                                int32_t keybuflen;
-                                int32_t kx = it.second->chunkX, kz = it.second->chunkZ, kw = dimId;
-                                //todohere todostopper - needs attention for 256h
-                                uint8_t kt = 0x30;
-                                switch (dimId) {
-                                case kDimIdOverworld:
-                                    //overworld
-                                    memcpy(&keybuf[0], &kx, sizeof(int32_t));
-                                    memcpy(&keybuf[4], &kz, sizeof(int32_t));
-                                    memcpy(&keybuf[8], &kt, sizeof(uint8_t));
-                                    keybuflen = 9;
-                                    break;
-                                default:
-                                    // nether
-                                    memcpy(&keybuf[0], &kx, sizeof(int32_t));
-                                    memcpy(&keybuf[4], &kz, sizeof(int32_t));
-                                    memcpy(&keybuf[8], &kw, sizeof(int32_t));
-                                    memcpy(&keybuf[12], &kt, sizeof(uint8_t));
-                                    keybuflen = 13;
-                                    break;
-                                }
-                                leveldb::Slice key(keybuf, keybuflen);
-                                leveldb::Status dstatus = db->Get(levelDbReadOptions, key, &svalue);
-                                if (!dstatus.ok()) {
-                                    log::warn("LevelDB operation returned status={}", dstatus.ToString());
-                                }
-                                pchunk = svalue.data();
-                                pchunkX = it.second->chunkX;
-                                pchunkZ = it.second->chunkZ;
-                            }
-
-                            uint8_t blockid = getBlockId_LevelDB_v2(pchunk, cx, cz, cy);
-
-                            if (blockid == 0 && (cy > it.second->topBlockY[cx][cz]) && (dimId != kDimIdNether)) {
-                                // special handling for air -- keep existing value if we are above top block
-                                // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
-                                // however, we do NOT do this for the nether. because: the nether
-                            }
-                            else {
-                                auto block = Block::get(blockid);
-
-                                if (block != nullptr) {
-                                    if (block->hasVariants()) {
-                                        int32_t blockdata = it.second->data[cx][cz];
-                                        auto variant = block->getVariantByBlockData(blockdata);
-                                        if (variant != nullptr) {
-                                            color = variant->color();
-                                        }
-                                        else {
-                                            color = block->color();
-                                            record_unknown_block_variant(
-                                                block->id,
-                                                block->name,
-                                                blockdata);
-                                        }
-                                    }
-                                    else {
-                                        color = block->color();
-                                    }
-                                }
-                                else {
-                                    record_unknown_block_id(blockid);
-                                    color = kColorDefault;
-                                }
-
-                                // do grid lines
-                                if (checkDoForDim(control.doGrid) && (cx == 0 || cz == 0)) {
-                                    if ((it.second->chunkX == 0) && (it.second->chunkZ == 0) && (cx == 0) &&
-                                        (cz == 0)) {
-                                        // highlight (0,0)
-                                        color = local_htobe32(0xeb3333);
-                                    }
-                                    else {
-                                        color = local_htobe32(0xc1ffc4);
-                                    }
-                                }
-
-#ifdef PIXEL_COPY_MEMCPY
-                                memcpy(&buf[(((imageZ + cz) - cropZ) * cropW + ((imageX + cx) - cropX)) * 3],
-                                    &pcolor[1], 3);
-#else
-                                // todo - any use in optimizing the offset calc?
-                                buf[(((imageZ + cz) - cropZ) * cropW + ((imageX + cx) - cropX)) * 3] = pcolor[1];
-                                buf[(((imageZ + cz) - cropZ) * cropW + ((imageX + cx) - cropX)) * 3 + 1] = pcolor[2];
-                                buf[(((imageZ + cz) - cropZ) * cropW + ((imageX + cx) - cropX)) * 3 + 2] = pcolor[3];
-#endif
-                            }
-                        }
-                    }
-                }
-            }
-
-            // output the image
-            std::string fnameTmp = fnBase + ".mcpe_viz_slice.";
-            if (!makeMovieFlag) {
-                fnameTmp += "full.";
-            }
-            fnameTmp += name;
-            fnameTmp += ".";
-            char xtmp[100];
-            sprintf(xtmp, "%03d", cy);
-            fnameTmp += xtmp;
-            fnameTmp += ".png";
-
-            control.fnLayerRaw[dimId][cy] = fnameTmp;
-
-            outputPNG(fnameTmp, makeImageDescription(-1, cy), buf, cropW, cropH, false);
-        }
-
-        delete[] buf;
-
-        if (makeMovieFlag) {
-            // "ffmpeg" method
-            std::string fnameTmp = fnBase + ".mcpe_viz_slice.";
-            fnameTmp += name;
-            fnameTmp += ".%03d.png";
-
-            // todo - ffmpeg on win32? need bin path option?
-            // todo - provide other user options for ffmpeg cmd line params?
-            std::string cmdline = std::string("ffmpeg -y -framerate 1 -i " + fnameTmp + " -c:v libx264 -r 30 ");
-            cmdline += fnOut;
-            int32_t ret = system(cmdline.c_str());
-            if (ret != 0) {
-                log::error("Failed to create movie ret=({}) cmd=({})", ret, cmdline);
-            }
-
-            // todo - delete temp slice files? cmdline option to NOT delete
-        }
-
-        return 0;
-    }
-
-
     int32_t DimensionData_LevelDB::doOutput_GeoJSON()
     {
         // put spawnable info
@@ -1245,82 +1421,10 @@ ld.close();
         control.fnLayerTop[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".map.png");
         generateImage(control.fnLayerTop[dimId], kImageModeTerrain);
 
-        if (checkDoForDim(control.doImageBiome)) {
-            log::info("  Generate Biome Image");
-            control.fnLayerBiome[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".biome.png");
-            generateImage(control.fnLayerBiome[dimId], kImageModeBiome);
-        }
-        if (checkDoForDim(control.doImageGrass)) {
-            log::info("  Generate Grass Image");
-            control.fnLayerGrass[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".grass.png");
-            generateImage(control.fnLayerGrass[dimId], kImageModeGrass);
-        }
-        if (checkDoForDim(control.doImageHeightCol)) {
-            log::info("  Generate Height Column Image");
-            control.fnLayerHeight[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".height_col.png");
-            generateImage(control.fnLayerHeight[dimId], kImageModeHeightCol);
-        }
-        if (checkDoForDim(control.doImageHeightColGrayscale)) {
-            log::info("  Generate Height Column (grayscale) Image");
-            control.fnLayerHeightGrayscale[dimId] = std::string(
-                dirOut + "/" + fnBase + "." + name + ".height_col_grayscale.png");
-            generateImage(control.fnLayerHeightGrayscale[dimId], kImageModeHeightColGrayscale);
-        }
-        if (checkDoForDim(control.doImageHeightColAlpha)) {
-            log::info("  Generate Height Column (alpha) Image");
-            control.fnLayerHeightAlpha[dimId] = std::string(
-                dirOut + "/" + fnBase + "." + name + ".height_col_alpha.png");
-            generateImage(control.fnLayerHeightAlpha[dimId], kImageModeHeightColAlpha);
-        }
-        if (checkDoForDim(control.doImageLightBlock)) {
-            log::info("  Generate Block Light Image");
-            control.fnLayerBlockLight[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".light_block.png");
-            generateImage(control.fnLayerBlockLight[dimId], kImageModeBlockLight);
-        }
-        if (checkDoForDim(control.doImageLightSky)) {
-            log::info("  Generate Sky Light Image");
-            control.fnLayerSkyLight[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".light_sky.png");
-            generateImage(control.fnLayerSkyLight[dimId], kImageModeSkyLight);
-        }
-        if (checkDoForDim(control.doImageSlimeChunks)) {
-            log::info("  Generate Slime Chunks Image");
-            control.fnLayerSlimeChunks[dimId] = std::string(
-                dirOut + "/" + fnBase + "." + name + ".slime_chunks.png");
-            generateImageSpecial(control.fnLayerSlimeChunks[dimId], kImageModeSlimeChunksMCPE);
-        }
+        log::info("  Generate block list");
+        generateBlockList(db, name);
 
-        if (checkDoForDim(control.doImageShadedRelief)) {
-            log::info("  Generate Shaded Relief Image");
-            control.fnLayerShadedRelief[dimId] = std::string(
-                dirOut + "/" + fnBase + "." + name + ".shaded_relief.png");
-#if 0
-
-            // todobig - idea is to oversample the src image and then get higher resolution shaded relief - but, openlayers does not cooperate with this idea :) -- could fiddle with it later
-            // todo - param for oversample
-            std::string fnTemp = std::string(dirOut + "/" + fnBase + "." + name + ".shaded_relief.temp.png");
-            if (oversampleImage(control.fnLayerHeightGrayscale[dimId], fnTemp, 2) == 0) {
-                generateShadedRelief(fnTemp, control.fnLayerShadedRelief[dimId]);
-                // remove temporary file
-                deleteFile(fnTemp);
-            }
-
-#else
-            generateShadedRelief(control.fnLayerHeightGrayscale[dimId], control.fnLayerShadedRelief[dimId]);
-#endif
-        }
-
-        if (checkDoForDim(control.doMovie)) {
-            log::info("  Generate movie");
-            const std::string movieName = (control.outputDir / ("bedrock_viz." + name + ".mp4")).generic_string();
-            generateMovie(db, dirOut + "/" + fnBase, movieName, true, true);
-        }
-
-        if (checkDoForDim(control.doSlices)) {
-            log::info("  Generate full-size slices");
-            generateSlices(db, dirOut + "/" + fnBase);
-        }
-
-        doOutput_Schematic(db);
+        //doOutput_Schematic(db);
 
         // reset
         for(auto& i: Block::list()) {
