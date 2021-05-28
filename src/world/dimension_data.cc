@@ -464,7 +464,8 @@ std::ofstream ld;
 ld.open("world_blocks.txt");
 ld << "WORLD BLOCKS LEGEND\n";
 
-bool blockSeen[256] = {};
+uint64_t blockCnt[1024] = {};
+std::string blockNames[1024];
 
         char keybuf[128];
         int32_t keybuflen;
@@ -782,11 +783,21 @@ uint8_t y = cy;
 fwrite(&y, 1, 1, fd);
 uint8_t b = blockid;
 fwrite(&b, 1, 1, fd);
-if (blockSeen[b] == false)
+
+if (block->name == "Dragon Egg")
 {
-    ld << "blockid=" << std::dec << blockid << ", name='" << block->name << "', color=" << std::hex << color << std::dec << std::endl;
+    ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
 }
-blockSeen[b] = true;
+
+
+if (blockid < 1024)
+{
+    blockCnt[blockid] += 1;
+    if (blockCnt[blockid] == 1)
+    {
+        blockNames[blockid] = block->name;
+    }
+}
                                             }
                                             else {
                                                 // bad blockid
@@ -863,6 +874,14 @@ blockSeen[b] = true;
                 png_write_rows(png[cy].png, png[cy].row_pointers, 16);
             }
         }
+
+for (int i=0; i<1024; i++)
+{
+    if (blockCnt[i] > 0)
+    {
+        ld << "blockid=" << std::dec << i << ", tot=" << blockCnt[i] << ", name='" << blockNames[i] << "', color=" << std::hex << color << std::dec << std::endl;
+    }
+}
 fclose(fd);
 ld.close();
 
