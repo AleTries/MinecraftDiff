@@ -914,7 +914,11 @@ ld.open(worldName+"_blocks.txt");
 ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
 
 uint64_t blockCnt[1024] = {};
-std::string blockNames[1024];
+struct Coords
+{
+    int x, y, z;
+};
+std::vector<Coords> blockLists[1024];
 
         char keybuf[128];
         int32_t keybuflen;
@@ -1188,9 +1192,10 @@ if ( (x >= limMinX) and (x <= limMaxX) )
     if (blockid < 1024)
     {
         blockCnt[blockid] += 1;
-        if (blockCnt[blockid] == 1)
+
+        if (blockCnt[blockid] <= control.blockListRare)
         {
-            blockNames[blockid] = block->name;
+           blockLists[blockid].push_back({x, y, z});
         }
     }
 }
@@ -1247,8 +1252,13 @@ for (int i=0; i<1024; i++)
     int idx = arrIdx[i];
     if (blockCnt[idx] <= control.blockListRare)
     {
-        //ld << "blockid=" << std::dec << idx  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+        for(auto v : blockLists[idx])
+        {
+            auto block = Block::get(idx);
+            ld << "blockid=" << std::dec << idx  << ", name='" << block->name << "', (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+        }
     }
+    blockLists[idx].clear();
 }
 
 uint32_t totCnt = 0;
@@ -1260,7 +1270,7 @@ for (int i=0; i<1024; i++)
     if (blockCnt[idx] > 0)
     {   
         auto block = Block::get(idx);
-        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << color << std::dec << std::endl;
+        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << block->color() << std::dec << std::endl;
     }
 }
 fclose(fd);
