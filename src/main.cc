@@ -453,6 +453,9 @@ namespace mcpe_viz {
       ("min-z", value<int>(), "minumum value of z in output blocks")
       ("max-z", value<int>(), "maxumum value of z in output blocks")
       ("block-list", value<int>(), "Output the world block list for world 0/1/2")
+      ("block-filter", value<std::string>(), "World block list filter by name")
+      ("list-max", value<int>(), "Maximum number of blocks in output list")
+      ("list-rare", value<int>(), "Maximum number of 'rare' blocks in output list")
 
 			("no-tile", "Generates single images instead of tiling output into smaller images. May cause loading problems if image size is > 4096px by 4096px")
 			("tile-size", value<std::string>(), "Changes tile sizes to specified dimensions (Default: 2048px by 2048px)")
@@ -505,6 +508,15 @@ namespace mcpe_viz {
       }
       if (vm.count("block-list")) {
         control.blockListOutDim = vm["block-list"].as<int>();
+      }
+      if (vm.count("block-filter")) {
+        control.blockFilter = vm["block-filter"].as<std::string>();
+      }
+      if (vm.count("list-max")) {
+        control.blockListMax = vm["list-max"].as<int>();
+      }
+      if (vm.count("list-rare")) {
+        control.blockListRare = vm["list-rare"].as<int>();
       }
 
 			// --xml fn

@@ -58,6 +58,9 @@ namespace mcpe_viz {
         int32_t movieX, movieY, movieW, movieH;
         int32_t minX, maxX, minZ, maxZ;
         int32_t blockListOutDim;
+        std::string blockFilter;
+        uint32_t blockListMax;
+        uint32_t blockListRare;
 
         int32_t heightMode;
 
@@ -102,6 +105,9 @@ namespace mcpe_viz {
             tryDbRepair = false;
             movieX = movieY = movieW = movieH = 0;
             blockListOutDim = kDimIdOverworld;
+            blockFilter = "<none>";
+            blockListMax = 100;
+            blockListRare = 3;
 
             leveldbFilter = 10;
             leveldbBlockSize = 4096;

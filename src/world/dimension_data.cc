@@ -905,10 +905,13 @@ namespace mcpe_viz {
         const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
         const int32_t imageW = chunkW * 16;
         const int32_t imageH = chunkH * 16;
+
+unsigned int blockListCnt = 0;
 log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
 FILE * fd = fopen("world_blocks.xyz", "wb");
 std::ofstream ld;
 ld.open(worldName+"_blocks.txt");
+ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
 
 uint64_t blockCnt[1024] = {};
 std::string blockNames[1024];
@@ -1176,20 +1179,20 @@ fwrite(&b, 1, 1, fd);
 
 if ( (x >= limMinX) and (x <= limMaxX) )
 {
-if (block->name == "Dragon Egg")
-{
-    ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
-}
-
-
-if (blockid < 1024)
-{
-    blockCnt[blockid] += 1;
-    if (blockCnt[blockid] == 1)
+    if ((block->name == control.blockFilter) and (blockListCnt < control.blockListMax))
     {
-        blockNames[blockid] = block->name;
+        blockListCnt++;
+        ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
     }
-}
+
+    if (blockid < 1024)
+    {
+        blockCnt[blockid] += 1;
+        if (blockCnt[blockid] == 1)
+        {
+            blockNames[blockid] = block->name;
+        }
+    }
 }
                                             }
                                             else {
@@ -1234,7 +1237,19 @@ auto compareForSort = [blockCnt] (int i1, int i2)
     return (blockCnt[i1] < blockCnt[i2]);
 };
 
+// Sort array by number of blocks
 std::sort(arrIdx, arrIdx+1024, compareForSort);
+
+ld << "WORLD RARE BLOCKS (TOTAL less that " << control.blockListRare << ")" << std::endl;
+
+for (int i=0; i<1024; i++)
+{
+    int idx = arrIdx[i];
+    if (blockCnt[idx] <= control.blockListRare)
+    {
+        //ld << "blockid=" << std::dec << idx  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+    }
+}
 
 uint32_t totCnt = 0;
 for (int i=0; i<1024; i++) totCnt+=blockCnt[i];
@@ -1243,8 +1258,9 @@ for (int i=0; i<1024; i++)
 {
     int idx = arrIdx[i];
     if (blockCnt[idx] > 0)
-    {
-        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << blockNames[idx] << "', color=" << std::hex << color << std::dec << std::endl;
+    {   
+        auto block = Block::get(idx);
+        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << color << std::dec << std::endl;
     }
 }
 fclose(fd);
@@ -1378,8 +1394,11 @@ ld.close();
         control.fnLayerTop[dimId] = std::string(dirOut + "/" + fnBase + "." + name + ".map.png");
         generateImage(control.fnLayerTop[dimId], kImageModeTerrain);
 
-        log::info("  Generate block list");
-        generateBlockList(db, name);
+        if (dimId == control.blockListOutDim)
+        {
+            log::info("  Generate block list");
+            generateBlockList(db, name);
+        }
 
         //doOutput_Schematic(db);
 
