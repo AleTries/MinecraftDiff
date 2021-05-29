@@ -1180,9 +1180,9 @@ if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ))
 {
     if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
     {
-        uint8_t r = color >> 24;
-        uint8_t g = color >> 16;
-        uint8_t b = color >> 8;
+        uint8_t r = (color >> 8) & 0xFF;
+        uint8_t g = (color >> 16) & 0xFF;
+        uint8_t b = (color >> 24) & 0xFF;
         fd << x << ", " << y << ", " << z << ", ";
         fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
         if (blockListCnt < control.blockListMax)
