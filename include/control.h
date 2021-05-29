@@ -58,6 +58,7 @@ namespace mcpe_viz {
         char helpFlags;
         bool tryDbRepair;
         int32_t movieX, movieY, movieW, movieH;
+        int32_t minX, maxX, minZ, maxZ;
 
         int32_t heightMode;
 

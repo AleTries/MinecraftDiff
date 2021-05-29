@@ -449,7 +449,13 @@ namespace mcpe_viz {
 				->multitoken()->zero_tokens(), "Display chunk grid on top of images")
 			("html", "Create html and javascript files to use as a fancy viewer")
 			("html-most", "Create html, javascript, and most image files to use as a fancy viewer")
-			("html-all", "Create html, javascript, and *all* image files to use as a fancy viewer")
+      ("html-all", "Create html, javascript, and *all* image files to use as a fancy viewer")
+
+      ("min-x", value<int>(), "minumum value of x")
+      ("max-x", value<int>(), "maxumum value of x")
+      ("min-z", value<int>(), "minumum value of z")
+      ("max-z", value<int>(), "maxumum value of z")
+
 			("no-force-geojson", "Don't load geojson in html because we are going to use a web server (or Firefox)")
 			("no-tile", "Generates single images instead of tiling output into smaller images. May cause loading problems if image size is > 4096px by 4096px")
 			("tile-size", value<std::string>(), "Changes tile sizes to specified dimensions (Default: 2048px by 2048px)")
@@ -488,6 +494,19 @@ namespace mcpe_viz {
 			if (vm.count("outdir")) {
 				control.outputDir = vm["outdir"].as<std::string>();
 			}
+      if (vm.count("min-x")) {
+        control.minX = vm["min-x"].as<int>();
+      }
+      if (vm.count("max-x")) {
+        control.minX = vm["max-x"].as<int>();
+      }
+      if (vm.count("min-z")) {
+        control.minX = vm["min-z"].as<int>();
+      }
+      if (vm.count("max-z")) {
+        control.minX = vm["max-z"].as<int>();
+      }
+
 			// --xml fn
 			if (vm.count("xml")) {
 				control.fnXml = vm["xml"].as<std::string>();

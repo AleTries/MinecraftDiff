@@ -859,6 +859,45 @@ namespace mcpe_viz {
 
     int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::string& worldName)
     {
+        int32_t limMinX = minChunkX*16;
+
+        if (control.minX != 0)
+        {
+            if (control.minX/16 > minChunkX)
+            {
+               limMinX = control.minX;
+           }
+        }
+
+        int32_t limMaxX = maxChunkX*16;
+        if (control.maxX != 0)
+        {
+            if (control.maxX/16 < maxChunkX)
+            {
+                limMaxX = control.maxX;
+            }
+        }
+
+        int32_t limMinZ = minChunkZ*16;
+
+        if (control.minZ != 0)
+        {
+            if (control.minZ/16 > minChunkZ)
+            {
+               limMinZ = control.minZ;
+           }
+        }
+
+        int32_t limMaxZ = maxChunkZ*16;
+        if (control.maxZ != 0)
+        {
+            if (control.maxZ/16 < maxChunkZ)
+            {
+                limMaxZ = control.maxZ;
+            }
+        }
+
+
         const int32_t chunkOffsetX = -minChunkX;
         const int32_t chunkOffsetZ = -minChunkZ;
 
@@ -870,7 +909,6 @@ log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 
 FILE * fd = fopen("world_blocks.xyz", "wb");
 std::ofstream ld;
 ld.open(worldName+"_blocks.txt");
-ld << "WORLD BLOCKS LEGEND\n";
 
 uint64_t blockCnt[1024] = {};
 std::string blockNames[1024];
@@ -882,20 +920,12 @@ std::string blockNames[1024];
         uint8_t kt_v3 = 0x2f;
         leveldb::Status dstatus;
 
-        log::info("    Writing all images in one pass");
-
         std::string svalue;
 
         int32_t color;
         const char* pcolor = (const char*)&color;
 
         int16_t* emuchunk = new int16_t[NUM_BYTES_CHUNK_V3];
-
-        // create row buffers
-        uint8_t* rbuf[MAX_BLOCK_HEIGHT + 1];
-        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
-            rbuf[cy] = new uint8_t[(imageW * 3) * 16];
-        }
 
         // create a helper buffer which contains topBlockY for the entire image
         uint8_t currTopBlockY = MAX_BLOCK_HEIGHT;
@@ -974,11 +1004,6 @@ std::string blockNames[1024];
                                     // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
                                     // however, we do NOT do this for the nether. because: the nether
 
-                                    // we need to copy this pixel from another layer
-                                    memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
-                                        &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
-                                        3);
-
                                 }
                                 else {
                                     auto block = Block::get(blockid);
@@ -1006,23 +1031,7 @@ std::string blockNames[1024];
                                         record_unknown_block_id(blockid);
                                         color = kColorDefault;
                                     }
-
-#ifdef PIXEL_COPY_MEMCPY
-                                    memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], &pcolor[1], 3);
-#else
-                                    // todo - any use in optimizing the offset calc?
-                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3] = pcolor[1];
-                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 1] = pcolor[2];
-                                    rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 2] = pcolor[3];
-#endif
                                 }
-                            }
-
-                            // to support 256h worlds, for v2 chunks, we need to make 128..255 the same as 127
-                            // todo - could optimize this
-                            for (int cy = 128; cy <= MAX_BLOCK_HEIGHT; cy++) {
-                                memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
-                                    &rbuf[127][((cz * imageW) + imageX + cx) * 3], 3);
                             }
 
                         }
@@ -1118,11 +1127,6 @@ std::string blockNames[1024];
                                             // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
                                             // however, we do NOT do this for the nether. because: the nether
 
-                                            // we need to copy this pixel from another layer
-                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
-                                                &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
-                                                3);
-
                                         }
                                         else {
                                             // TODO not safe 
@@ -1170,6 +1174,8 @@ fwrite(&y, 1, 1, fd);
 uint8_t b = blockid;
 fwrite(&b, 1, 1, fd);
 
+if ( (x >= limMinX) and (x <= limMaxX) )
+{
 if (block->name == "Dragon Egg")
 {
     ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
@@ -1184,6 +1190,7 @@ if (blockid < 1024)
         blockNames[blockid] = block->name;
     }
 }
+}
                                             }
                                             else {
                                                 // bad blockid
@@ -1194,44 +1201,12 @@ if (blockid < 1024)
                                                 // set an unused color
                                                 color = local_htobe32(0xf010d0);
                                             }
-
-#ifdef PIXEL_COPY_MEMCPY
-                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], &pcolor[1], 3);
-#else
-                                            // todo - any use in optimizing the offset calc?
-                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3] = pcolor[1];
-                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 1] = pcolor[2];
-                                            rbuf[cy][((cz * imageW) + imageX + cx) * 3 + 2] = pcolor[3];
-#endif
                                         }
                                     }
                                 }
                             }
                         }
                         else {
-                            // we did NOT find the cubic chunk, which means that it is 100% air
-
-                            for (int32_t cx = 0; cx < 16; cx++) {
-                                for (int32_t cz = 0; cz < 16; cz++) {
-                                    currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
-                                    for (int32_t ccy = 0; ccy < 16; ccy++) {
-                                        int32_t cy = cubicy * 16 + ccy;
-                                        if ((cy > currTopBlockY) && (dimId != kDimIdNether)) {
-                                            // special handling for air -- keep existing value if we are above top block
-                                            // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
-                                            // however, we do NOT do this for the nether. because: the nether
-
-                                            // we need to copy this pixel from another layer
-                                            memcpy(&rbuf[cy][((cz * imageW) + imageX + cx) * 3],
-                                                &rbuf[currTopBlockY][((cz * imageW) + imageX + cx) * 3],
-                                                3);
-                                        }
-                                        else {
-                                            memset(&rbuf[cy][((cz * imageW) + imageX + cx) * 3], 0, 3);
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
@@ -1241,12 +1216,6 @@ if (blockid < 1024)
                         notFoundCt2++;
                         // slogger.msg(kLogInfo1,"WARNING: Did not find chunk in leveldb x=%d z=%d status=%s\n", chunkX, chunkZ, dstatus.ToString().c_str());
 
-                        // we need to clear this area
-                        for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT; cy++) {
-                            for (int32_t cz = 0; cz < 16; cz++) {
-                                memset(&rbuf[cy][((cz * imageW) + imageX) * 3], 0, 16 * 3);
-                            }
-                        }
                         // todonow - need this?
                         //continue;
                     }
@@ -1255,6 +1224,9 @@ if (blockid < 1024)
             }
         }
 
+uint32_t totCnt = 0;
+for (int i=0; i<1024; i++) totCnt+=blockCnt[i];
+ld << "WORLD BLOCKS LEGEND (TOTAL #= " << totCnt << ")" << std::endl;
 for (int i=0; i<1024; i++)
 {
     if (blockCnt[i] > 0)
