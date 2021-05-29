@@ -498,13 +498,13 @@ namespace mcpe_viz {
         control.minX = vm["min-x"].as<int>();
       }
       if (vm.count("max-x")) {
-        control.minX = vm["max-x"].as<int>();
+        control.maxX = vm["max-x"].as<int>();
       }
       if (vm.count("min-z")) {
-        control.minX = vm["min-z"].as<int>();
+        control.minZ = vm["min-z"].as<int>();
       }
       if (vm.count("max-z")) {
-        control.minX = vm["max-z"].as<int>();
+        control.maxZ = vm["max-z"].as<int>();
       }
       if (vm.count("block-list")) {
         control.blockListOutDim = vm["block-list"].as<int>();

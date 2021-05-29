@@ -861,7 +861,7 @@ namespace mcpe_viz {
     {
         int32_t limMinX = minChunkX*16;
 
-        if (control.minX != 0)
+        if (control.minX != 0x8FFFFFFF)
         {
             if (control.minX/16 > minChunkX)
             {
@@ -870,7 +870,7 @@ namespace mcpe_viz {
         }
 
         int32_t limMaxX = maxChunkX*16;
-        if (control.maxX != 0)
+        if (control.maxX != 0x8FFFFFFF)
         {
             if (control.maxX/16 < maxChunkX)
             {
@@ -880,16 +880,16 @@ namespace mcpe_viz {
 
         int32_t limMinZ = minChunkZ*16;
 
-        if (control.minZ != 0)
+        if (control.minZ != 0x8FFFFFFF)
         {
             if (control.minZ/16 > minChunkZ)
             {
                limMinZ = control.minZ;
            }
         }
-
+printf("control.maxZ 0x%08x\n", control.maxZ );
         int32_t limMaxZ = maxChunkZ*16;
-        if (control.maxZ != 0)
+        if (control.maxZ != 0x8FFFFFFF)
         {
             if (control.maxZ/16 < maxChunkZ)
             {
@@ -907,8 +907,9 @@ namespace mcpe_viz {
         const int32_t imageH = chunkH * 16;
 
 unsigned int blockListCnt = 0;
-log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
-FILE * fd = fopen("world_blocks.xyz", "wb");
+log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", limMinX, limMaxX, limMinZ, limMaxZ);
+std::ofstream fd;
+fd.open(worldName+"_blocks.xyz");
 std::ofstream ld;
 ld.open(worldName+"_blocks.txt");
 ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
@@ -1172,21 +1173,23 @@ std::vector<Coords> blockLists[1024];
                                                     color = kColorDefault;
                                                 }
 
-int16_t x = 16*minChunkX + imageX + cx;
-fwrite(&x, 2, 1, fd);
-int16_t z = 16*minChunkZ + imageZ + cz;
-fwrite(&z, 2, 1, fd);
-uint8_t y = cy;
-fwrite(&y, 1, 1, fd);
-uint8_t b = blockid;
-fwrite(&b, 1, 1, fd);
-
-if ( (x >= limMinX) and (x <= limMaxX) )
+int x = 16*minChunkX + imageX + cx;
+int z = 16*minChunkZ + imageZ + cz;
+int y = cy;
+if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ))
 {
-    if ((block->name == control.blockFilter) and (blockListCnt < control.blockListMax))
+    if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
     {
-        blockListCnt++;
-        ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+        uint8_t r = color >> 24;
+        uint8_t g = color >> 16;
+        uint8_t b = color >> 8;
+        fd << x << ", " << y << ", " << z << ", ";
+        fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
+        if (blockListCnt < control.blockListMax)
+        {
+            blockListCnt++;
+            ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+        }
     }
 
     if (blockid < 1024)
@@ -1273,7 +1276,7 @@ for (int i=0; i<1024; i++)
         ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << block->color() << std::dec << std::endl;
     }
 }
-fclose(fd);
+fd.close();
 ld.close();
 
         delete[] tbuf;
