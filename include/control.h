@@ -39,8 +39,6 @@ namespace mcpe_viz {
 		std::vector<int> doMovie;
 		std::vector<int> doSlices;
 		std::vector<int> doGrid;
-		int doHtml;
-		bool doTiles;
 		std::vector<int> doImageBiome;
 		std::vector<int> doImageGrass;
 		std::vector<int> doImageHeightCol;
@@ -59,6 +57,7 @@ namespace mcpe_viz {
         bool tryDbRepair;
         int32_t movieX, movieY, movieW, movieH;
         int32_t minX, maxX, minZ, maxZ;
+        int32_t blockListOutDim;
 
         int32_t heightMode;
 
@@ -81,10 +80,7 @@ namespace mcpe_viz {
             doDetailParseFlag = false;
 
             doMovie = kDimIdNone;
-            doSlices = kDimIdNone;
             doGrid = kDimIdNone;
-            doHtml = 0;
-            doTiles = true;
             doImageBiome = kDimIdNone;
             doImageGrass = kDimIdNone;
             doImageHeightCol = kDimIdNone;
@@ -94,7 +90,6 @@ namespace mcpe_viz {
             doImageLightSky = kDimIdNone;
             doImageSlimeChunks = kDimIdNone;
             doImageShadedRelief = kDimIdNone;
-            noForceGeoJSONFlag = false;
  
             // todobig - reasonable default? strike a balance between speed/# of files
             tileWidth = 2048;
@@ -106,6 +101,7 @@ namespace mcpe_viz {
             helpFlags = HelpFlags::Basic;
             tryDbRepair = false;
             movieX = movieY = movieW = movieH = 0;
+            blockListOutDim = kDimIdOverworld;
 
             leveldbFilter = 10;
             leveldbBlockSize = 4096;

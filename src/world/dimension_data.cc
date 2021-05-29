@@ -1224,14 +1224,27 @@ if (blockid < 1024)
             }
         }
 
+// Sort array
+int arrIdx[1024] = {};
+for (int i=0; i<1024; i++) arrIdx[i]=i;
+
+// Define lambda function comparison
+auto compareForSort = [blockCnt] (int i1, int i2)
+{
+    return (blockCnt[i1] < blockCnt[i2]);
+};
+
+std::sort(arrIdx, arrIdx+1024, compareForSort);
+
 uint32_t totCnt = 0;
 for (int i=0; i<1024; i++) totCnt+=blockCnt[i];
 ld << "WORLD BLOCKS LEGEND (TOTAL #= " << totCnt << ")" << std::endl;
 for (int i=0; i<1024; i++)
 {
-    if (blockCnt[i] > 0)
+    int idx = arrIdx[i];
+    if (blockCnt[idx] > 0)
     {
-        ld << "blockid=" << std::dec << i << ", tot=" << blockCnt[i] << ", name='" << blockNames[i] << "', color=" << std::hex << color << std::dec << std::endl;
+        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << blockNames[idx] << "', color=" << std::hex << color << std::dec << std::endl;
     }
 }
 fclose(fd);
@@ -1242,32 +1255,6 @@ ld.close();
         // slogger.msg(kLogInfo1,"    Chunk Info: Found = %d / Not Found (our list) = %d / Not Found (leveldb) = %d\n", foundCt, notFoundCt1, notFoundCt2);
 
         delete[] emuchunk;
-        return 0;
-    }
-    int32_t DimensionData_LevelDB::doOutput_GeoJSON()
-    {
-        // put spawnable info
-        for (const auto& it : listCheckSpawn) {
-            // spwawnable! add it to the list
-            double ix, iy;
-            char tmpstring[512];
-            worldPointToGeoJSONPoint(dimId, it->x, it->z, ix, iy);
-            sprintf(tmpstring, ""
-                "\"Spawnable\":true,"
-                "\"Name\":\"SpawnableBoundingCircle\","
-                "\"BoundingCircle\":\"1\","
-                "\"Clickable\":\"0\","
-                "\"Dimension\":\"%d\","
-                "\"Radius\":\"%d\","
-                "\"Pos\":[%d,%d,%d]"
-                "}}", dimId, it->distance, it->x, 0, it->z
-            );
-            std::string json = ""
-                + makeGeojsonHeader(ix, iy)
-                + tmpstring;
-            listGeoJSON.push_back(json);
-        }
-
         return 0;
     }
 
@@ -1381,8 +1368,6 @@ ld.close();
     int32_t DimensionData_LevelDB::doOutput(leveldb::DB* db)
     {
         log::info("Do Output: {}", name);
-
-        doOutput_GeoJSON();
 
         // we put images in subdir
         std::string fnBase = "bedrock_viz";

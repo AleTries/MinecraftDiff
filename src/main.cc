@@ -447,16 +447,13 @@ namespace mcpe_viz {
 			("movie-dim", "Integers describing the bounds of the movie (UL X, UL Y, WIDTH, HEIGHT)")
 			("grid", value<std::vector<std::string>>()->implicit_value(kDimIdAllStrings, kDimIdAllStr)
 				->multitoken()->zero_tokens(), "Display chunk grid on top of images")
-			("html", "Create html and javascript files to use as a fancy viewer")
-			("html-most", "Create html, javascript, and most image files to use as a fancy viewer")
-      ("html-all", "Create html, javascript, and *all* image files to use as a fancy viewer")
 
-      ("min-x", value<int>(), "minumum value of x")
-      ("max-x", value<int>(), "maxumum value of x")
-      ("min-z", value<int>(), "minumum value of z")
-      ("max-z", value<int>(), "maxumum value of z")
+      ("min-x", value<int>(), "Minumum value of x in output blocks")
+      ("max-x", value<int>(), "maxumum value of x in output blocks")
+      ("min-z", value<int>(), "minumum value of z in output blocks")
+      ("max-z", value<int>(), "maxumum value of z in output blocks")
+      ("block-list", value<int>(), "Output the world block list for world 0/1/2")
 
-			("no-force-geojson", "Don't load geojson in html because we are going to use a web server (or Firefox)")
 			("no-tile", "Generates single images instead of tiling output into smaller images. May cause loading problems if image size is > 4096px by 4096px")
 			("tile-size", value<std::string>(), "Changes tile sizes to specified dimensions (Default: 2048px by 2048px)")
 			("shortrun", "Debug testing parameter - process only first 1000 records")
@@ -505,6 +502,9 @@ namespace mcpe_viz {
       }
       if (vm.count("max-z")) {
         control.minX = vm["max-z"].as<int>();
+      }
+      if (vm.count("block-list")) {
+        control.blockListOutDim = vm["block-list"].as<int>();
       }
 
 			// --xml fn
@@ -698,10 +698,6 @@ namespace mcpe_viz {
 			if (vm.count("grid")) {
 				control.doGrid = parseDimIdOptArgs(vm["grid"].as<std::vector<std::string>>());
 			}
-			// --html
-			if (vm.count("html")) {
-				control.doHtml = true;
-			}
 			// --tile-size[=tilew,tileh]
 			if (vm.count("tile-size")) {
 				std::string optarg = vm["tile-size"].as<std::string>();
@@ -719,38 +715,6 @@ namespace mcpe_viz {
 				}
 			}
 			// --no-tile
-			if (vm.count("no-tile")) {
-				control.doTiles = false;
-			}
-			// --html-most
-			if (vm.count("html-most")) {
-				control.doHtml = true;
-				control.doImageBiome =
-					control.doImageGrass =
-					control.doImageHeightCol =
-					control.doImageHeightColGrayscale =
-					control.doImageHeightColAlpha =
-					control.doImageShadedRelief =
-					control.doImageLightBlock =
-					control.doImageLightSky =
-					control.doImageSlimeChunks =
-						kDimIdAll;
-			}
-			// --html-all
-			if (vm.count("html-all")) {
-				control.doHtml = true;
-				control.doImageBiome =
-					control.doImageGrass =
-					control.doImageHeightCol =
-					control.doImageHeightColGrayscale =
-					control.doImageHeightColAlpha =
-					control.doImageShadedRelief =
-					control.doImageLightBlock =
-					control.doImageLightSky =
-					control.doImageSlimeChunks =
-						kDimIdAll;
-					control.doSlices = kDimIdAll;
-			}
 			// --no-force-geojson
 			if (vm.count("no-force-geojson")) {
 				control.noForceGeoJSONFlag = true;
@@ -906,9 +870,6 @@ int main(int argc, char** argv)
     if (parse_args(argc, argv) != 0) {
         mcpe_viz::print_usage(control.helpFlags);
         return -1;
-    }
-    if (control.doHtml) {
-        listGeoJSON.clear();
     }
     auto console_log_level = control.quietFlag ? Level::Warn : (control.verboseFlag ? Level::Debug : Level::Info);
     auto file_log_level = control.verboseFlag ? Level::Trace : Level::Debug;
