@@ -925,25 +925,8 @@ int main(int argc, char** argv)
         world->checkSpawnable();
     }
 
-    leveldb::DB *emptyWorld = nullptr;
-    if (control.emptyDbName != "<none>")
-    {
-      leveldb::Status openstatus = leveldb::DB::Open(*world->dbOptions, std::string(control.emptyDbName + "/db"), &emptyWorld);
-        log::info("DB Open Status: {} (block_size={} bloom_filter_bits={})", openstatus.ToString(), control.leveldbBlockSize, control.leveldbFilter);
-        fflush(stderr);
-        if (!openstatus.ok()) {
-           world->dbClose();
-           return -1;
-        }
-    }
-
     world->doOutput();
     world->dbClose();
-    if (emptyWorld != nullptr)
-    {
-       delete emptyWorld;
-       emptyWorld = nullptr;
-    }
 
     print_unknown_warnings();
     log::info("Done.");

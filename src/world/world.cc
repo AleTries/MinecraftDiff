@@ -814,9 +814,19 @@ namespace mcpe_viz
         calcChunkBounds();
 
         // todonow todobig todostopper -- how to handle worlds that are larger than png dimensional limits (see midgard world file)
+        leveldb::DB *emptyWorld = nullptr;
+        if (control.emptyDbName != "<none>")
+        {
+            leveldb::Status openstatus = leveldb::DB::Open(*dbOptions, std::string(control.emptyDbName + "/db"), &emptyWorld);
+            log::info("DB Open Status: {} (block_size={} bloom_filter_bits={})", openstatus.ToString(), control.leveldbBlockSize, control.leveldbFilter);
+            fflush(stderr);
+            if (!openstatus.ok()) {
+               return -1;
+            }
+        }
 
         for (int32_t i = 0; i < kDimIdCount; i++) {
-            dimDataList[i]->doOutput(db);
+            dimDataList[i]->doOutput(db, emptyWorld);
         }
 
         return 0;

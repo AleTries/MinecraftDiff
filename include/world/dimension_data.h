@@ -740,7 +740,7 @@ namespace mcpe_viz {
 
         int32_t doOutput_Schematic(leveldb::DB* db);
 
-        int32_t doOutput(leveldb::DB* db);
+        int32_t doOutput(leveldb::DB* db, leveldb::DB* emptyWorld=nullptr);
     };
 
 }

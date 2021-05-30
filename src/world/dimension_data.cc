@@ -888,7 +888,7 @@ const int16_t* DimensionData_LevelDB::findChunk(leveldb::DB* db, DimensionType d
     }
 
     leveldb::Status dstatus;
-    static int16_t emuchunk[NUM_BYTES_CHUNK_V3];
+    auto emuchunk = new int16_t[NUM_BYTES_CHUNK_V3];
     int16_t * retPtr = nullptr;
     std::string svalue;
     dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
@@ -901,8 +901,7 @@ const int16_t* DimensionData_LevelDB::findChunk(leveldb::DB* db, DimensionType d
         // we have a v7 chunk - emulate v3
         convertChunkV7toV3(rchunk, svalue.size(), emuchunk);
 
-        // the first byte is not interesting to us (it is version #?)
-        retPtr = &emuchunk[1];
+        retPtr = emuchunk;
     }
 
     return retPtr;
@@ -978,6 +977,10 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
     std::ofstream ld;
     ld.open(control.dirLeveldb+ "_"+ dimName+"_blocks.txt");
     ld << "WORLD NAME: '" << control.dirLeveldb << "'" << std::endl;
+    if (emptyDb != nullptr)
+    {
+        ld << "COMPARISON WORLD (EMPTY): '" << control.emptyDbName << "'" << std::endl;
+    }
     ld << "WORLD SIZE: [X:" << 16*minChunkX << " => " << 16*maxChunkX;
     ld << ", Z:" << 16*minChunkZ << " => " << 16*maxChunkZ << "]" << std::endl;
     ld << "WORLD FILTER: [X:" << limMinX << " => " << limMaxX;
@@ -994,6 +997,8 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
 
     // we operate on sets of 16 rows (which is one chunk high) of image z
     int32_t runCt = 0;
+    uint32_t worldChunksFound = 0;
+    uint32_t emptyMatchChunks = 0;
     for (int8_t cubicy = 0; cubicy < MAX_CUBIC_Y; cubicy++)
     for (int32_t imageZ = 0, chunkZ = minChunkZ; imageZ < imageH; imageZ += 16, chunkZ++) {
 
@@ -1004,8 +1009,9 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
         for (int32_t imageX = 0, chunkX = minChunkX; imageX < imageW; imageX += 16, chunkX++) {
 
            const int16_t *firstBlockId = findChunk(db, (DimensionType)dimId, 16*minChunkX + imageX, 16*cubicy, 16*minChunkZ + imageZ);
-           if ((firstBlockId != nullptr) and (firstBlockId[0] < 1024)) {
+           if (firstBlockId != nullptr) {
 
+                worldChunksFound++;
                 // Check if we have a comparison (empty) world
                 const int16_t *emptyBlockId = nullptr;
                 if (emptyDb != nullptr)
@@ -1014,8 +1020,18 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
                     if (emptyBlockId == nullptr)
                     {
                         // When doing a diff, skip unless the chunk exists in both worlds
+                        delete[] firstBlockId;
                         continue;
                     }
+                    emptyMatchChunks++;
+                }
+
+                // the first byte is not interesting to us (it is version #?)
+                auto chunkPtr = &firstBlockId[1];
+                const int16_t* emptyChunk = nullptr;
+                if (emptyBlockId != nullptr)
+                {
+                   emptyChunk = &emptyBlockId[1];
                 }
 
                 // we step through the chunk in the natural order to speed things up
@@ -1026,7 +1042,12 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
                             int x = 16*minChunkX + imageX + cx;
                             int z = 16*minChunkZ + imageZ + cz;
                             int y = 16*cubicy + cy;
-                            uint16_t blockid = *(firstBlockId++);
+                            uint16_t blockid = *(chunkPtr++);
+                            uint16_t emptyId = blockid+1;
+                            if (emptyChunk != nullptr)
+                            {
+                                emptyId = *(emptyChunk++);
+                            }
 
                             if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
                             {
@@ -1035,15 +1056,10 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
                                     auto block = Block::get(blockid);
                                     if (block == nullptr) continue;
 
-                                    uint16_t emptyId = blockid;
-                                    if (emptyBlockId != nullptr)
+                                    if (emptyId == blockid)
                                     {
-                                        emptyId = *(emptyBlockId++);
-                                        if (emptyId == blockid)
-                                        {
-                                            // When doing a comparison, ignore identical bocks!
-                                            continue;
-                                        }
+                                        // When doing a comparison, ignore identical bocks!
+                                        continue;
                                     }
 
                                     if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
@@ -1076,8 +1092,21 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
                         }
                     }
                 }
+                delete [] firstBlockId;
+                if (emptyBlockId != nullptr)
+                {
+                    delete [] emptyBlockId;
+                }
+
             }
         }
+    }
+
+    if ((emptyMatchChunks != 0) and (worldChunksFound != 0))
+    {
+        log::info("    Found {}/{} comparison chunks", emptyMatchChunks, worldChunksFound);
+        ld << "WORLD COMPARE CHUNKS " << emptyMatchChunks << "/" << worldChunksFound << " = ";
+        ld << 100.0*emptyMatchChunks/worldChunksFound << "%" << std::endl;
     }
 
     // Sort array
@@ -1234,7 +1263,7 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
         return 0;
     }
 
-    int32_t DimensionData_LevelDB::doOutput(leveldb::DB* db)
+    int32_t DimensionData_LevelDB::doOutput(leveldb::DB* db, leveldb::DB* emptyWorld)
     {
         log::info("Do Output: {}", name);
 
@@ -1249,8 +1278,9 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
 
         if (dimId == control.blockListOutDim)
         {
+
             log::info("  Generate block list");
-            generateBlockList(db, name);
+            generateBlockList(db, name, emptyWorld);
         }
 
         //doOutput_Schematic(db);
