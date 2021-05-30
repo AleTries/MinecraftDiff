@@ -449,9 +449,11 @@ namespace mcpe_viz {
 				->multitoken()->zero_tokens(), "Display chunk grid on top of images")
 
       ("min-x", value<int>(), "Minumum value of x in output blocks")
-      ("max-x", value<int>(), "maxumum value of x in output blocks")
-      ("min-z", value<int>(), "minumum value of z in output blocks")
-      ("max-z", value<int>(), "maxumum value of z in output blocks")
+      ("max-x", value<int>(), "Maxumum value of x in output blocks")
+      ("min-z", value<int>(), "Minumum value of z in output blocks")
+      ("max-z", value<int>(), "Maxumum value of z in output blocks")
+      ("min-y", value<int>(), "Minumum value of y in output blocks")
+      ("max-y", value<int>(), "Maxumum value of y in output blocks")
       ("block-list", value<int>(), "Output the world block list for world 0/1/2")
       ("block-filter", value<std::string>(), "World block list filter by name")
       ("list-max", value<int>(), "Maximum number of blocks in output list")
@@ -505,6 +507,12 @@ namespace mcpe_viz {
       }
       if (vm.count("max-z")) {
         control.maxZ = vm["max-z"].as<int>();
+      }
+      if (vm.count("min-y")) {
+        control.minY = vm["min-y"].as<int>();
+      }
+      if (vm.count("max-y")) {
+        control.maxY = vm["max-y"].as<int>();
       }
       if (vm.count("block-list")) {
         control.blockListOutDim = vm["block-list"].as<int>();

@@ -56,7 +56,7 @@ namespace mcpe_viz {
         char helpFlags;
         bool tryDbRepair;
         int32_t movieX, movieY, movieW, movieH;
-        int minX, maxX, minZ, maxZ;
+        int minX, maxX, minZ, maxZ, minY, maxY;
         int32_t blockListOutDim;
         std::string blockFilter;
         uint32_t blockListMax;
@@ -104,7 +104,7 @@ namespace mcpe_viz {
             helpFlags = HelpFlags::Basic;
             tryDbRepair = false;
             movieX = movieY = movieW = movieH = 0;
-            minX = maxX = minZ = maxZ = 0x8FFFFFFF;
+            minX = maxX = minZ = maxZ = minY = maxY = 0x8FFFFFFF;
             blockListOutDim = kDimIdOverworld;
             blockFilter = "<none>";
             blockListMax = 100;

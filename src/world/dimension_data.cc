@@ -887,7 +887,6 @@ namespace mcpe_viz {
                limMinZ = control.minZ;
            }
         }
-printf("control.maxZ 0x%08x\n", control.maxZ );
         int32_t limMaxZ = maxChunkZ*16;
         if (control.maxZ != 0x8FFFFFFF)
         {
@@ -897,6 +896,23 @@ printf("control.maxZ 0x%08x\n", control.maxZ );
             }
         }
 
+        int32_t limMinY = 0;
+
+        if (control.minY != 0x8FFFFFFF)
+        {
+            if (control.minY > 0)
+            {
+               limMinY = control.minY;
+           }
+        }
+        int32_t limMaxY = 255;
+        if (control.maxY != 0x8FFFFFFF)
+        {
+            if (control.maxY < 255)
+            {
+                limMaxY = control.maxY;
+            }
+        }
 
         const int32_t chunkOffsetX = -minChunkX;
         const int32_t chunkOffsetZ = -minChunkZ;
@@ -1176,7 +1192,7 @@ std::vector<Coords> blockLists[1024];
 int x = 16*minChunkX + imageX + cx;
 int z = 16*minChunkZ + imageZ + cz;
 int y = cy;
-if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ))
+if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
 {
     if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
     {
