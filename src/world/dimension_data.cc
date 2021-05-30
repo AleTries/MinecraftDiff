@@ -857,451 +857,272 @@ namespace mcpe_viz {
         return 0;
     }
 
-    int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::string& worldName)
-    {
-        int32_t limMinX = minChunkX*16;
 
-        if (control.minX != 0x8FFFFFFF)
-        {
-            if (control.minX/16 > minChunkX)
-            {
-               limMinX = control.minX;
-           }
-        }
-
-        int32_t limMaxX = maxChunkX*16;
-        if (control.maxX != 0x8FFFFFFF)
-        {
-            if (control.maxX/16 < maxChunkX)
-            {
-                limMaxX = control.maxX;
-            }
-        }
-
-        int32_t limMinZ = minChunkZ*16;
-
-        if (control.minZ != 0x8FFFFFFF)
-        {
-            if (control.minZ/16 > minChunkZ)
-            {
-               limMinZ = control.minZ;
-           }
-        }
-        int32_t limMaxZ = maxChunkZ*16;
-        if (control.maxZ != 0x8FFFFFFF)
-        {
-            if (control.maxZ/16 < maxChunkZ)
-            {
-                limMaxZ = control.maxZ;
-            }
-        }
-
-        int32_t limMinY = 0;
-
-        if (control.minY != 0x8FFFFFFF)
-        {
-            if (control.minY > 0)
-            {
-               limMinY = control.minY;
-           }
-        }
-        int32_t limMaxY = 255;
-        if (control.maxY != 0x8FFFFFFF)
-        {
-            if (control.maxY < 255)
-            {
-                limMaxY = control.maxY;
-            }
-        }
-
-        const int32_t chunkOffsetX = -minChunkX;
-        const int32_t chunkOffsetZ = -minChunkZ;
-
-        const int32_t chunkW = (maxChunkX - minChunkX + 1);
-        const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
-        const int32_t imageW = chunkW * 16;
-        const int32_t imageH = chunkH * 16;
-
-unsigned int blockListCnt = 0;
-log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", limMinX, limMaxX, limMinZ, limMaxZ);
-std::ofstream fd;
-fd.open(worldName+"_blocks.xyz");
-std::ofstream ld;
-ld.open(worldName+"_blocks.txt");
-ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
-
-uint64_t blockCnt[1024] = {};
-struct Coords
+int32_t DimensionData_LevelDB::findBlock(leveldb::DB* db, DimensionType dimId, int32_t x, uint8_t y, int32_t z)
 {
-    int x, y, z;
-};
-std::vector<Coords> blockLists[1024];
+    char keybuf[128];
+    int32_t keybuflen=0;
+    int32_t kw = dimId;
+    uint8_t kt_v3 = 0x2f;
+    int32_t blockid = 1025;
 
-        char keybuf[128];
-        int32_t keybuflen;
-        int32_t kw = dimId;
-        uint8_t kt = 0x30;
-        uint8_t kt_v3 = 0x2f;
-        leveldb::Status dstatus;
+    int32_t chunkX = x/16, chunkZ = z/16, cubicy = y/16;
 
+    // Cache last chunk found
+    static int32_t lastChunkX = 0xFFFFFFFF;
+    static int32_t lastChunkZ = 0xFFFFFFFF;
+    static int32_t lastChunkY = 0xFFFFFFFF;
+
+    // construct key to get the chunk
+    if (dimId == kDimIdOverworld) {
+        //overworld
+        memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+        memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+        memcpy(&keybuf[8], &kt_v3, sizeof(uint8_t));
+        memcpy(&keybuf[9], &cubicy, sizeof(uint8_t));
+        keybuflen = 10;
+    }
+    else {
+        // nether (and probably any others that are added)
+        memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
+        memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
+        memcpy(&keybuf[8], &kw, sizeof(int32_t));
+        memcpy(&keybuf[12], &kt_v3, sizeof(uint8_t));
+        memcpy(&keybuf[13], &cubicy, sizeof(uint8_t));
+        keybuflen = 14;
+    }
+
+    static leveldb::Status dstatus;
+    static int16_t emuchunk[NUM_BYTES_CHUNK_V3];
+    static const int16_t* pchunk_word;
+
+    if ( (chunkX != lastChunkX) or (cubicy != lastChunkY) or (chunkZ != lastChunkZ))
+    {
         std::string svalue;
+        dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
+        if (dstatus.ok()) {
+            // we got a post-0.17 cubic chunk
+            const char* rchunk = svalue.data();
 
-        int32_t color;
-        const char* pcolor = (const char*)&color;
+            // determine if it is a v7 chunk and process accordingly
+            //todozooz - here is where it gets weird
+            // we have a v7 chunk - emulate v3
+            convertChunkV7toV3(rchunk, svalue.size(), emuchunk);
+            pchunk_word = emuchunk;
 
-        int16_t* emuchunk = new int16_t[NUM_BYTES_CHUNK_V3];
+            // the first byte is not interesting to us (it is version #?)
+            pchunk_word++;
+        }
+    }
 
-        // create a helper buffer which contains topBlockY for the entire image
-        uint8_t currTopBlockY = MAX_BLOCK_HEIGHT;
-        size_t bsize = (size_t)imageW * (size_t)imageH;
-        uint8_t* tbuf = new uint8_t[bsize];
-        memset(tbuf, MAX_BLOCK_HEIGHT, bsize);
-        for (const auto& it : chunks) {
-            int32_t ix = (it.second->chunkX + chunkOffsetX) * 16;
-            int32_t iz = (it.second->chunkZ + chunkOffsetZ) * 16;
-            for (int32_t cz = 0; cz < 16; cz++) {
+    lastChunkX = chunkX;
+    lastChunkZ = chunkZ;
+    lastChunkY = cubicy;
+
+    if (dstatus.ok()) {
+
+        blockid = *(pchunk_word++);
+
+        // blockid = getBlockId_LevelDB_v3(ochunk, cx,cz,ccy);
+        // TODO not safe 
+        if (blockid >= 0 && blockid < 1024) {
+
+        }
+        else {
+            // bad blockid
+            //todozooz todostopper - we get a lot of these w/ negative blockid around row 4800 of world 'another1'
+            log::trace("Invalid blockid={} (cc {} {} {})",
+                blockid, x, y, z);
+            record_unknown_block_id(blockid);
+        }
+    }
+    return blockid;
+}
+
+int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::string& worldName)
+{
+    int32_t limMinX = minChunkX*16;
+
+    if (control.minX != 0x8FFFFFFF)
+    {
+        if (control.minX/16 > minChunkX)
+        {
+           limMinX = control.minX;
+       }
+    }
+
+    int32_t limMaxX = maxChunkX*16;
+    if (control.maxX != 0x8FFFFFFF)
+    {
+        if (control.maxX/16 < maxChunkX)
+        {
+            limMaxX = control.maxX;
+        }
+    }
+
+    int32_t limMinZ = minChunkZ*16;
+
+    if (control.minZ != 0x8FFFFFFF)
+    {
+        if (control.minZ/16 > minChunkZ)
+        {
+           limMinZ = control.minZ;
+       }
+    }
+    int32_t limMaxZ = maxChunkZ*16;
+    if (control.maxZ != 0x8FFFFFFF)
+    {
+        if (control.maxZ/16 < maxChunkZ)
+        {
+            limMaxZ = control.maxZ;
+        }
+    }
+
+    int32_t limMinY = 0;
+
+    if (control.minY != 0x8FFFFFFF)
+    {
+        if (control.minY > 0)
+        {
+           limMinY = control.minY;
+       }
+    }
+    int32_t limMaxY = 255;
+    if (control.maxY != 0x8FFFFFFF)
+    {
+        if (control.maxY < 255)
+        {
+            limMaxY = control.maxY;
+        }
+    }
+
+    const int32_t chunkOffsetX = -minChunkX;
+    const int32_t chunkOffsetZ = -minChunkZ;
+
+    const int32_t chunkW = (maxChunkX - minChunkX + 1);
+    const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
+    const int32_t imageW = chunkW * 16;
+    const int32_t imageH = chunkH * 16;
+
+    unsigned int blockListCnt = 0;
+    log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", limMinX, limMaxX, limMinZ, limMaxZ);
+    std::ofstream fd;
+    fd.open(worldName+"_blocks.xyz");
+    std::ofstream ld;
+    ld.open(worldName+"_blocks.txt");
+    ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
+
+    uint64_t blockCnt[1024] = {};
+    struct Coords
+    {
+        int x, y, z;
+    };
+    std::vector<Coords> blockLists[1024];
+
+    // we operate on sets of 16 rows (which is one chunk high) of image z
+    int32_t runCt = 0;
+    for (int8_t cubicy = 0; cubicy < MAX_CUBIC_Y; cubicy++)
+    for (int32_t imageZ = 0, chunkZ = minChunkZ; imageZ < imageH; imageZ += 16, chunkZ++) {
+
+        if ((runCt++ % 20) == 0) {
+            log::info("    Row {} of {}", imageZ, imageH);
+        }
+
+        for (int32_t imageX = 0, chunkX = minChunkX; imageX < imageW; imageX += 16, chunkX++) {
+
+           int32_t blockid = findBlock(db, (DimensionType)dimId, 16*minChunkX + imageX, 16*cubicy, 16*minChunkZ + imageZ);
+           if (blockid < 1024) {
+                // we step through the chunk in the natural order to speed things up
                 for (int32_t cx = 0; cx < 16; cx++) {
-                    tbuf[(iz + cz) * imageW + (ix + cx)] = it.second->topBlockY[cx][cz];
-                }
-            }
-        };
+                    for (int32_t cz = 0; cz < 16; cz++) {
+                        for (int32_t cy = 0; cy < 16; cy++) {
 
-        int32_t foundCt = 0, notFoundCt2 = 0;
-        //todozooz -- new 16-bit block-id's (instead of 8-bit) are a BIG issue - this needs attention here
-        uint8_t blockdata;
-        int32_t blockid;
+                            int x = 16*minChunkX + imageX + cx;
+                            int z = 16*minChunkZ + imageZ + cz;
+                            int y = 16*cubicy + cy;
 
-        // we operate on sets of 16 rows (which is one chunk high) of image z
-        int32_t runCt = 0;
-        for (int32_t imageZ = 0, chunkZ = minChunkZ; imageZ < imageH; imageZ += 16, chunkZ++) {
-
-            if ((runCt++ % 20) == 0) {
-                log::info("    Row {} of {}", imageZ, imageH);
-            }
-
-            for (int32_t imageX = 0, chunkX = minChunkX; imageX < imageW; imageX += 16, chunkX++) {
-
-                // FIRST - we try pre-0.17 chunks
-
-                // construct key to get the chunk
-                if (dimId == kDimIdOverworld) {
-                    //overworld
-                    memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
-                    memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
-                    memcpy(&keybuf[8], &kt, sizeof(uint8_t));
-                    keybuflen = 9;
-                }
-                else {
-                    // nether (and probably any others that are added)
-                    memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
-                    memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
-                    memcpy(&keybuf[8], &kw, sizeof(int32_t));
-                    memcpy(&keybuf[12], &kt, sizeof(uint8_t));
-                    keybuflen = 13;
-                }
-
-                dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
-                if (dstatus.ok()) {
-
-                    // we got a pre-0.17 chunk
-                    const char* ochunk = nullptr;
-                    const char* pchunk = nullptr;
-
-                    pchunk = svalue.data();
-                    ochunk = pchunk;
-                    // size_t ochunk_size = svalue.size();
-                    foundCt++;
-
-                    // we step through the chunk in the natural order to speed things up
-                    for (int32_t cx = 0; cx < 16; cx++) {
-                        for (int32_t cz = 0; cz < 16; cz++) {
-                            currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
-                            for (int32_t cy = 0; cy <= MAX_BLOCK_HEIGHT_127; cy++) {
-
-                                // todo - if we use this, we get blockdata errors... somethings not right
-                                //blockid = *(pchunk++);
-                                blockid = getBlockId_LevelDB_v2(ochunk, cx, cz, cy);
-
-                                if (blockid == 0 && (cy > currTopBlockY) && (dimId != kDimIdNether)) {
-
-                                    // special handling for air -- keep existing value if we are above top block
-                                    // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
-                                    // however, we do NOT do this for the nether. because: the nether
-
-                                }
-                                else {
-                                    auto block = Block::get(blockid);
-                                    if (block != nullptr) {
-                                        if (block->hasVariants()) {
-                                            blockdata = getBlockData_LevelDB_v2(ochunk, cx, cz, cy);
-                                            auto variant = block->getVariantByBlockData(blockdata);
-                                            if (variant != nullptr) {
-                                                color = variant->color();
-                                            }
-                                            else {
-                                                record_unknown_block_variant(
-                                                    block->id,
-                                                    block->name,
-                                                    blockdata);
-                                                // since we did not find the variant, use the parent block's color
-                                                color = block->color();
-                                            }
-                                        }
-                                        else {
-                                            color = block->color();
-                                        }
+                            if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
+                            {
+                                blockid = findBlock(db, (DimensionType)dimId, x, y, z);
+                                auto block = Block::get(blockid);
+                                if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
+                                {
+                                    uint32_t color = block->color();
+                                    uint8_t r = (color >> 8) & 0xFF;
+                                    uint8_t g = (color >> 16) & 0xFF;
+                                    uint8_t b = (color >> 24) & 0xFF;
+                                    fd << x << ", " << y << ", " << z << ", ";
+                                    fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
+                                    if (blockListCnt < control.blockListMax)
+                                    {
+                                        blockListCnt++;
+                                        ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
                                     }
-                                    else {
-                                        record_unknown_block_id(blockid);
-                                        color = kColorDefault;
+                                }
+
+                                if (blockid < 1024)
+                                {
+                                    blockCnt[blockid] += 1;
+
+                                    if (blockCnt[blockid] <= control.blockListRare)
+                                    {
+                                       blockLists[blockid].push_back({x, y, z});
                                     }
                                 }
                             }
-
                         }
                     }
                 }
-                else {
-
-                    // we did NOT find a pre-0.17 chunk...
-
-                    // SECOND -- we try post 0.17 chunks
-
-                    // we need to iterate over all possible y cubic chunks here...
-                    int32_t cubicFoundCount = 0;
-                    for (int8_t cubicy = 0; cubicy < MAX_CUBIC_Y; cubicy++) {
-
-                        // todobug - this fails around level 112? on another1 -- weird -- run a valgrind to see where we're messing up
-                        //check valgrind output
-
-                        // construct key to get the chunk
-                        if (dimId == kDimIdOverworld) {
-                            //overworld
-                            memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
-                            memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
-                            memcpy(&keybuf[8], &kt_v3, sizeof(uint8_t));
-                            memcpy(&keybuf[9], &cubicy, sizeof(uint8_t));
-                            keybuflen = 10;
-                        }
-                        else {
-                            // nether (and probably any others that are added)
-                            memcpy(&keybuf[0], &chunkX, sizeof(int32_t));
-                            memcpy(&keybuf[4], &chunkZ, sizeof(int32_t));
-                            memcpy(&keybuf[8], &kw, sizeof(int32_t));
-                            memcpy(&keybuf[12], &kt_v3, sizeof(uint8_t));
-                            memcpy(&keybuf[13], &cubicy, sizeof(uint8_t));
-                            keybuflen = 14;
-                        }
-
-                        dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
-                        if (dstatus.ok()) {
-                            cubicFoundCount++;
-
-                            // we got a post-0.17 cubic chunk
-                            const char* rchunk = svalue.data();
-                            const int16_t* pchunk_word = (int16_t*)svalue.data();
-                            const char* pchunk_byte = (char*)svalue.data();
-                            size_t ochunk_size = svalue.size();
-                            const int16_t* ochunk_word = pchunk_word;
-                            const char* ochunk_byte = pchunk_byte;
-                            bool wordModeFlag = false;
-                            foundCt++;
-
-                            // determine if it is a v7 chunk and process accordingly
-                            //todozooz - here is where it gets weird
-                            if (rchunk[0] != 0x0) {
-                                // we have a v7 chunk - emulate v3
-                                convertChunkV7toV3(rchunk, ochunk_size, emuchunk);
-                                wordModeFlag = true;
-                                pchunk_word = emuchunk;
-                                ochunk_word = emuchunk;
-                                ochunk_size = NUM_BYTES_CHUNK_V3;
-                            }
-                            else {
-                                wordModeFlag = false;
-                                // slogger.msg(kLogWarning,"Found a non-v7 chunk\n");
-                            }
-
-                            // the first byte is not interesting to us (it is version #?)
-                            pchunk_word++;
-                            pchunk_byte++;
-
-                            // we step through the chunk in the natural order to speed things up
-                            for (int32_t cx = 0; cx < 16; cx++) {
-                                for (int32_t cz = 0; cz < 16; cz++) {
-                                    currTopBlockY = tbuf[(imageZ + cz) * imageW + imageX + cx];
-                                    for (int32_t ccy = 0; ccy < 16; ccy++) {
-                                        int32_t cy = cubicy * 16 + ccy;
-
-                                        // todo - if we use this, we get blockdata errors... somethings not right
-                                        if (wordModeFlag) {
-                                            blockid = *(pchunk_word++);
-                                        }
-                                        else {
-                                            //todozooz - getting blockid manually fixes issue
-                                            // blockid = *(pchunk_byte++);
-                                            blockid = getBlockId_LevelDB_v3(ochunk_byte, cx, cz, ccy);
-                                        }
-
-                                        // blockid = getBlockId_LevelDB_v3(ochunk, cx,cz,ccy);
-
-                                        if (blockid == 0 && (cy > currTopBlockY) && (dimId != kDimIdNether)) {
-
-                                            // special handling for air -- keep existing value if we are above top block
-                                            // the idea is to show air underground, but hide it above so that the map is not all black pixels @ y=MAX_BLOCK_HEIGHT
-                                            // however, we do NOT do this for the nether. because: the nether
-
-                                        }
-                                        else {
-                                            // TODO not safe 
-                                            if (blockid >= 0 && blockid < 1024) {
-                                                auto block = Block::get(blockid);
-                                                if (block != nullptr) {
-                                                    if (block->hasVariants()) {
-                                                        if (wordModeFlag) {
-                                                            blockdata = getBlockData_LevelDB_v3__fake_v7(ochunk_word,
-                                                                ochunk_size,
-                                                                cx, cz, ccy);
-                                                        }
-                                                        else {
-                                                            blockdata = getBlockData_LevelDB_v3(ochunk_byte,
-                                                                ochunk_size, cx, cz,
-                                                                ccy);
-                                                        }
-                                                        auto variant = block->getVariantByBlockData(blockdata);
-                                                        if (variant != nullptr) {
-                                                            color = variant->color();
-                                                        }
-                                                        else {
-                                                            record_unknown_block_variant(
-                                                                block->id,
-                                                                block->name,
-                                                                blockdata);
-                                                            color = block->color();
-                                                        }
-                                                    }
-                                                    else {
-                                                        color = block->color();
-                                                    }
-                                                }
-                                                else {
-                                                    record_unknown_block_id(blockid);
-                                                    color = kColorDefault;
-                                                }
-
-int x = 16*minChunkX + imageX + cx;
-int z = 16*minChunkZ + imageZ + cz;
-int y = cy;
-if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
-{
-    if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
-    {
-        uint8_t r = (color >> 8) & 0xFF;
-        uint8_t g = (color >> 16) & 0xFF;
-        uint8_t b = (color >> 24) & 0xFF;
-        fd << x << ", " << y << ", " << z << ", ";
-        fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
-        if (blockListCnt < control.blockListMax)
-        {
-            blockListCnt++;
-            ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+            }
         }
     }
 
-    if (blockid < 1024)
+    // Sort array
+    int arrIdx[1024] = {};
+    for (int i=0; i<1024; i++) arrIdx[i]=i;
+
+    // Define lambda function comparison
+    auto compareForSort = [blockCnt] (int i1, int i2)
     {
-        blockCnt[blockid] += 1;
+        return (blockCnt[i1] < blockCnt[i2]);
+    };
 
-        if (blockCnt[blockid] <= control.blockListRare)
+    // Sort array by number of blocks
+    std::sort(arrIdx, arrIdx+1024, compareForSort);
+
+    ld << "WORLD RARE BLOCKS (TOTAL less that " << control.blockListRare << ")" << std::endl;
+
+    for (int i=0; i<1024; i++)
+    {
+        int idx = arrIdx[i];
+        if (blockCnt[idx] <= control.blockListRare)
         {
-           blockLists[blockid].push_back({x, y, z});
-        }
-    }
-}
-                                            }
-                                            else {
-                                                // bad blockid
-                                                //todozooz todostopper - we get a lot of these w/ negative blockid around row 4800 of world 'another1'
-                                                log::trace("Invalid blockid={} (image {} {}) (cc {} {} {})",
-                                                    blockid, imageX, imageZ, cx, cz, cy);
-                                                record_unknown_block_id(blockid);
-                                                // set an unused color
-                                                color = local_htobe32(0xf010d0);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        else {
-                        }
-                    }
-
-                    if (cubicFoundCount <= 0) {
-
-                        // FINALLY -- we did not find the chunk at all
-                        notFoundCt2++;
-                        // slogger.msg(kLogInfo1,"WARNING: Did not find chunk in leveldb x=%d z=%d status=%s\n", chunkX, chunkZ, dstatus.ToString().c_str());
-
-                        // todonow - need this?
-                        //continue;
-                    }
-                }
-
+            for(auto v : blockLists[idx])
+            {
+                auto block = Block::get(idx);
+                ld << "blockid=" << std::dec << idx  << ", name='" << block->name << "', (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
             }
         }
+        blockLists[idx].clear();
+    }
 
-// Sort array
-int arrIdx[1024] = {};
-for (int i=0; i<1024; i++) arrIdx[i]=i;
-
-// Define lambda function comparison
-auto compareForSort = [blockCnt] (int i1, int i2)
-{
-    return (blockCnt[i1] < blockCnt[i2]);
-};
-
-// Sort array by number of blocks
-std::sort(arrIdx, arrIdx+1024, compareForSort);
-
-ld << "WORLD RARE BLOCKS (TOTAL less that " << control.blockListRare << ")" << std::endl;
-
-for (int i=0; i<1024; i++)
-{
-    int idx = arrIdx[i];
-    if (blockCnt[idx] <= control.blockListRare)
+    uint32_t totCnt = 0;
+    for (int i=0; i<1024; i++) totCnt+=blockCnt[i];
+    ld << "WORLD BLOCKS LEGEND (TOTAL #= " << totCnt << ")" << std::endl;
+    for (int i=0; i<1024; i++)
     {
-        for(auto v : blockLists[idx])
-        {
+        int idx = arrIdx[i];
+        if (blockCnt[idx] > 0)
+        {   
             auto block = Block::get(idx);
-            ld << "blockid=" << std::dec << idx  << ", name='" << block->name << "', (" << v.x << ", " << v.y << ", " << v.z << ")" << std::endl;
+            ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << block->color() << std::dec << std::endl;
         }
     }
-    blockLists[idx].clear();
+    fd.close();
+    ld.close();
+
+    return 0;
 }
-
-uint32_t totCnt = 0;
-for (int i=0; i<1024; i++) totCnt+=blockCnt[i];
-ld << "WORLD BLOCKS LEGEND (TOTAL #= " << totCnt << ")" << std::endl;
-for (int i=0; i<1024; i++)
-{
-    int idx = arrIdx[i];
-    if (blockCnt[idx] > 0)
-    {   
-        auto block = Block::get(idx);
-        ld << "blockid=" << std::dec << idx << ", tot=" << blockCnt[idx] << ", name='" << block->name << "', color=" << std::hex << block->color() << std::dec << std::endl;
-    }
-}
-fd.close();
-ld.close();
-
-        delete[] tbuf;
-
-        // slogger.msg(kLogInfo1,"    Chunk Info: Found = %d / Not Found (our list) = %d / Not Found (leveldb) = %d\n", foundCt, notFoundCt1, notFoundCt2);
-
-        delete[] emuchunk;
-        return 0;
-    }
 
     int32_t DimensionData_LevelDB::doOutput_Schematic(leveldb::DB* db)
     {

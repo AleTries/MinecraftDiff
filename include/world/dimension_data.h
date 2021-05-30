@@ -733,6 +733,7 @@ namespace mcpe_viz {
 
         int32_t generateSlices(leveldb::DB* db, const std::string& fnBase);
         int32_t generateBlockList(leveldb::DB* db, const std::string& fnBase);
+        int32_t findBlock(leveldb::DB* db, DimensionType dimId, int32_t x, uint8_t y, int32_t z);
 
         int32_t doOutput_GeoJSON();
             
