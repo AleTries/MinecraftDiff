@@ -866,7 +866,7 @@ const int16_t* DimensionData_LevelDB::findChunk(leveldb::DB* db, DimensionType d
     uint8_t kt_v3 = 0x2f;
     int32_t blockid = 1025;
 
-    int32_t chunkX = x/16-minChunkX, chunkZ = z/16-minChunkZ, cubicy = y/16;
+    int32_t chunkX = x/16, chunkZ = z/16, cubicy = y/16;
 
     // construct key to get the chunk
     if (dimId == kDimIdOverworld) {
@@ -965,20 +965,24 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
         }
     }
 
-    const int32_t chunkOffsetX = -minChunkX;
-    const int32_t chunkOffsetZ = -minChunkZ;
-
     const int32_t chunkW = (maxChunkX - minChunkX + 1);
     const int32_t chunkH = (maxChunkZ - minChunkZ + 1);
     const int32_t imageW = chunkW * 16;
     const int32_t imageH = chunkH * 16;
 
     unsigned int blockListCnt = 0;
-    log::info("Scanning World within limits[X:{} => {}, Z:{} => {}]", limMinX, limMaxX, limMinZ, limMaxZ);
+    log::info("   World '{}' of size [X:{} => {}, Z:{} => {}]", control.dirLeveldb, 16*minChunkX, 16*maxChunkX, 16*minChunkZ, 16*maxChunkZ);
+    log::info("   Scanning World within limits [X:{} => {}, Y:{} => {}, Z:{} => {}]", limMinX, limMaxX, limMinY, limMaxY, limMinZ, limMaxZ);
     std::ofstream fd;
     fd.open(worldName+"_blocks.xyz");
     std::ofstream ld;
     ld.open(worldName+"_blocks.txt");
+    ld << "WORLD NAME: '" << control.dirLeveldb << "'" << std::endl;
+    ld << "WORLD SIZE: [X:" << 16*minChunkX << " => " << 16*maxChunkX;
+    ld << ", Z:" << 16*minChunkZ << " => " << 16*maxChunkZ << "]" << std::endl;
+    ld << "WORLD FILTER: [X:" << limMinX << " => " << limMaxX;
+    ld << ", Y:" << limMinY << " => " << limMaxY;
+    ld << ", Z:" << limMinZ << " => " << limMaxZ << "]" << std::endl;
     ld << "WORLD BLOCKS FILTERED by name '" << control.blockFilter << "'" << std::endl;
 
     uint64_t blockCnt[1024] = {};
@@ -1009,10 +1013,10 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
                             int x = 16*minChunkX + imageX + cx;
                             int z = 16*minChunkZ + imageZ + cz;
                             int y = 16*cubicy + cy;
+                            uint16_t blockid = *(firstBlockId++);
 
                             if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
                             {
-                                uint16_t blockid = *firstBlockId++;
                                 if (blockid < 1024)
                                 {                                
                                     auto block = Block::get(blockid);
