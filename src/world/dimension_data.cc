@@ -858,7 +858,7 @@ namespace mcpe_viz {
     }
 
 
-int32_t DimensionData_LevelDB::findBlock(leveldb::DB* db, DimensionType dimId, int32_t x, uint8_t y, int32_t z)
+const int16_t* DimensionData_LevelDB::findChunk(leveldb::DB* db, DimensionType dimId, int32_t x, uint8_t y, int32_t z)
 {
     char keybuf[128];
     int32_t keybuflen=0;
@@ -866,12 +866,7 @@ int32_t DimensionData_LevelDB::findBlock(leveldb::DB* db, DimensionType dimId, i
     uint8_t kt_v3 = 0x2f;
     int32_t blockid = 1025;
 
-    int32_t chunkX = x/16, chunkZ = z/16, cubicy = y/16;
-
-    // Cache last chunk found
-    static int32_t lastChunkX = 0xFFFFFFFF;
-    static int32_t lastChunkZ = 0xFFFFFFFF;
-    static int32_t lastChunkY = 0xFFFFFFFF;
+    int32_t chunkX = x/16-minChunkX, chunkZ = z/16-minChunkZ, cubicy = y/16;
 
     // construct key to get the chunk
     if (dimId == kDimIdOverworld) {
@@ -892,51 +887,25 @@ int32_t DimensionData_LevelDB::findBlock(leveldb::DB* db, DimensionType dimId, i
         keybuflen = 14;
     }
 
-    static leveldb::Status dstatus;
+    leveldb::Status dstatus;
     static int16_t emuchunk[NUM_BYTES_CHUNK_V3];
-    static const int16_t* pchunk_word;
-
-    if ( (chunkX != lastChunkX) or (cubicy != lastChunkY) or (chunkZ != lastChunkZ))
-    {
-        std::string svalue;
-        dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
-        if (dstatus.ok()) {
-            // we got a post-0.17 cubic chunk
-            const char* rchunk = svalue.data();
-
-            // determine if it is a v7 chunk and process accordingly
-            //todozooz - here is where it gets weird
-            // we have a v7 chunk - emulate v3
-            convertChunkV7toV3(rchunk, svalue.size(), emuchunk);
-            pchunk_word = emuchunk;
-
-            // the first byte is not interesting to us (it is version #?)
-            pchunk_word++;
-        }
-    }
-
-    lastChunkX = chunkX;
-    lastChunkZ = chunkZ;
-    lastChunkY = cubicy;
-
+    int16_t * retPtr = nullptr;
+    std::string svalue;
+    dstatus = db->Get(levelDbReadOptions, leveldb::Slice(keybuf, keybuflen), &svalue);
     if (dstatus.ok()) {
+        // we got a post-0.17 cubic chunk
+        const char* rchunk = svalue.data();
 
-        blockid = *(pchunk_word++);
+        // determine if it is a v7 chunk and process accordingly
+        //todozooz - here is where it gets weird
+        // we have a v7 chunk - emulate v3
+        convertChunkV7toV3(rchunk, svalue.size(), emuchunk);
 
-        // blockid = getBlockId_LevelDB_v3(ochunk, cx,cz,ccy);
-        // TODO not safe 
-        if (blockid >= 0 && blockid < 1024) {
-
-        }
-        else {
-            // bad blockid
-            //todozooz todostopper - we get a lot of these w/ negative blockid around row 4800 of world 'another1'
-            log::trace("Invalid blockid={} (cc {} {} {})",
-                blockid, x, y, z);
-            record_unknown_block_id(blockid);
-        }
+        // the first byte is not interesting to us (it is version #?)
+        retPtr = &emuchunk[1];
     }
-    return blockid;
+
+    return retPtr;
 }
 
 int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::string& worldName)
@@ -1030,8 +999,8 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
 
         for (int32_t imageX = 0, chunkX = minChunkX; imageX < imageW; imageX += 16, chunkX++) {
 
-           int32_t blockid = findBlock(db, (DimensionType)dimId, 16*minChunkX + imageX, 16*cubicy, 16*minChunkZ + imageZ);
-           if (blockid < 1024) {
+           const int16_t *firstBlockId = findChunk(db, (DimensionType)dimId, 16*minChunkX + imageX, 16*cubicy, 16*minChunkZ + imageZ);
+           if ((firstBlockId != nullptr) and (firstBlockId[0] < 1024)) {
                 // we step through the chunk in the natural order to speed things up
                 for (int32_t cx = 0; cx < 16; cx++) {
                     for (int32_t cz = 0; cz < 16; cz++) {
@@ -1043,25 +1012,31 @@ int32_t DimensionData_LevelDB::generateBlockList(leveldb::DB* db, const std::str
 
                             if ( (x >= limMinX) and (x <= limMaxX) and (z >= limMinZ) and (z <= limMaxZ) and (y >= limMinY) and (y <= limMaxY))
                             {
-                                blockid = findBlock(db, (DimensionType)dimId, x, y, z);
-                                auto block = Block::get(blockid);
-                                if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
-                                {
-                                    uint32_t color = block->color();
-                                    uint8_t r = (color >> 8) & 0xFF;
-                                    uint8_t g = (color >> 16) & 0xFF;
-                                    uint8_t b = (color >> 24) & 0xFF;
-                                    fd << x << ", " << y << ", " << z << ", ";
-                                    fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
-                                    if (blockListCnt < control.blockListMax)
-                                    {
-                                        blockListCnt++;
-                                        ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
-                                    }
-                                }
-
+                                uint16_t blockid = *firstBlockId++;
                                 if (blockid < 1024)
-                                {
+                                {                                
+                                    auto block = Block::get(blockid);
+                                    if (block == nullptr) continue;
+
+                                    if ((control.blockFilter == "<all>") or (block->name == control.blockFilter))
+                                    {
+                                        // Ignore air blocks in output point cloud
+                                        if (blockid != 0)
+                                        {
+                                            uint32_t color = block->color();
+                                            uint8_t r = (color >> 8) & 0xFF;
+                                            uint8_t g = (color >> 16) & 0xFF;
+                                            uint8_t b = (color >> 24) & 0xFF;
+                                            fd << x << ", " << y << ", " << z << ", ";
+                                            fd << (int16_t)r << ", " << (int16_t)g << ", " << (int16_t)b << std::endl;
+                                        }
+                                        if (blockListCnt < control.blockListMax)
+                                        {
+                                            blockListCnt++;
+                                            ld << "blockid=" << std::dec << blockid  << ", name='" << block->name << "', (" << x << ", " << (int16_t)y << ", " << z << ")" << std::endl;
+                                        }
+                                    }
+
                                     blockCnt[blockid] += 1;
 
                                     if (blockCnt[blockid] <= control.blockListRare)
