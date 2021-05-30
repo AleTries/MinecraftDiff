@@ -55,12 +55,12 @@ namespace mcpe_viz {
     class MinecraftWorld_LevelDB : public MinecraftWorld {
     private:
         leveldb::DB* db;
-        std::unique_ptr<leveldb::Options> dbOptions;
         int32_t totalRecordCt;
 
     public:
         // todobig - move to private?
         std::vector<std::unique_ptr<DimensionData_LevelDB>> dimDataList;
+        std::unique_ptr<leveldb::Options> dbOptions;
 
         MinecraftWorld_LevelDB();
 

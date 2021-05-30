@@ -59,6 +59,7 @@ namespace mcpe_viz {
         int minX, maxX, minZ, maxZ, minY, maxY;
         int32_t blockListOutDim;
         std::string blockFilter;
+        std::string emptyDbName;
         uint32_t blockListMax;
         uint32_t blockListRare;
 
@@ -107,6 +108,7 @@ namespace mcpe_viz {
             minX = maxX = minZ = maxZ = minY = maxY = 0x8FFFFFFF;
             blockListOutDim = kDimIdOverworld;
             blockFilter = "<none>";
+            emptyDbName = "<none>";
             blockListMax = 100;
             blockListRare = 3;
 

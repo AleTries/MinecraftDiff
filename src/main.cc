@@ -458,6 +458,7 @@ namespace mcpe_viz {
       ("block-filter", value<std::string>(), "World block list filter by name")
       ("list-max", value<int>(), "Maximum number of blocks in output list")
       ("list-rare", value<int>(), "Maximum number of 'rare' blocks in output list")
+      ("empty-db", value<std::string>(), "World database for comparison")
 
 			("no-tile", "Generates single images instead of tiling output into smaller images. May cause loading problems if image size is > 4096px by 4096px")
 			("tile-size", value<std::string>(), "Changes tile sizes to specified dimensions (Default: 2048px by 2048px)")
@@ -525,6 +526,9 @@ namespace mcpe_viz {
       }
       if (vm.count("list-rare")) {
         control.blockListRare = vm["list-rare"].as<int>();
+      }
+      if (vm.count("empty-db")) {
+        control.emptyDbName = vm["empty-db"].as<std::string>();
       }
 
 			// --xml fn
@@ -920,8 +924,26 @@ int main(int argc, char** argv)
         world->dbParse();
         world->checkSpawnable();
     }
+
+    leveldb::DB *emptyWorld = nullptr;
+    if (control.emptyDbName != "<none>")
+    {
+      leveldb::Status openstatus = leveldb::DB::Open(*world->dbOptions, std::string(control.emptyDbName + "/db"), &emptyWorld);
+        log::info("DB Open Status: {} (block_size={} bloom_filter_bits={})", openstatus.ToString(), control.leveldbBlockSize, control.leveldbFilter);
+        fflush(stderr);
+        if (!openstatus.ok()) {
+           world->dbClose();
+           return -1;
+        }
+    }
+
     world->doOutput();
     world->dbClose();
+    if (emptyWorld != nullptr)
+    {
+       delete emptyWorld;
+       emptyWorld = nullptr;
+    }
 
     print_unknown_warnings();
     log::info("Done.");

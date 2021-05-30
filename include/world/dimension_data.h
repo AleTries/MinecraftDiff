@@ -732,7 +732,7 @@ namespace mcpe_viz {
         // 372.432u 13.435s 6:50.66 93.9%  0+0k 419456+1842944io 210pf+0w
 
         int32_t generateSlices(leveldb::DB* db, const std::string& fnBase);
-        int32_t generateBlockList(leveldb::DB* db, const std::string& fnBase);
+        int32_t generateBlockList(leveldb::DB* db, const std::string& fnBase, leveldb::DB* emptyDb=nullptr);
         const int16_t* findChunk(leveldb::DB* db, DimensionType dimId, int32_t x, uint8_t y, int32_t z);
 
         int32_t doOutput_GeoJSON();
